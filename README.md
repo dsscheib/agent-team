@@ -63,7 +63,7 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 | Platform | Project-local files |
 |---|---|
-| Codex | `.codex/agents/<role>.toml` (standalone; Codex discovers it without a `config.toml` entry) |
+| Codex | `.codex/agents/<role>.toml` (standalone; Codex discovers it without a `config.toml` entry, in a trusted project) |
 | Claude Code | `.claude/agents/<role>.md` |
 | Copilot CLI | `.github/agents/<role>.agent.md` |
 | Antigravity | `.agents/agents/<role>.md` |
@@ -86,7 +86,9 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 ### Codex-specific caution
 
-Subagents are on by default in current Codex releases; `agents.enabled = false` in your configuration turns them off. Test spawning a named agent before relying on it. The model names in `catalog/roles.json` are not checked against the Codex docs; clear `codex_model` to use the parent session's model.
+Codex loads project agents from `.codex/agents/` only after you trust the project. In an untrusted project it sees none of them, so trust the project before testing. No `[agents."<name>"]` entry in `config.toml` is needed. Older Codex releases used one with `config_file`, but Codex CLI 0.167.2 ignores its description and reads the agent file instead. Subagents are on by default; `agents.enabled = false` in your configuration turns them off.
+
+The Codex model names in `catalog/roles.json` (`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`) are in Codex CLI 0.167.2's built-in model list. Check yours with `codex debug models`, or clear `codex_model` to use the parent session's model.
 
 ## Customization
 
