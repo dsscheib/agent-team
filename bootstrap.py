@@ -3,7 +3,6 @@
 import argparse
 import json
 import sys
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -40,10 +39,6 @@ SCOPE = {
                   'Keep any temporary output outside the repository or in disposable locations.'),
 }
 DEFAULT_SCOPE = 'Work only within your delegated scope and coordinate changes with the parent agent.'
-
-CODEX_CONFIG = Path('.codex/config.toml')
-CODEX_BACKUP = CODEX_CONFIG.with_name('config.toml.pre-agent-bootstrap.bak')
-CODEX_TEMP = CODEX_CONFIG.with_name('config.toml.agent-bootstrap.tmp')
 
 STARTER_AGENTS_MD = '''# Project instructions
 
@@ -102,22 +97,19 @@ def frontmatter(role, lines):
 
 
 def codex_agent(role):
+    # Codex discovers standalone .codex/agents/*.toml files; name, description and developer_instructions
+    # are required. sandbox_mode in an agent file does not override the parent session, and there is no
+    # per-agent edit restriction, so reviewers only lose the shell; the no-edit limit is in their instructions.
     r = ROLES[role]
-    pieces = [f'model = {toml_string(r["codex_model"])}',
-              f'model_reasoning_effort = {toml_string(r["codex_effort"])}']
-    # Codex has no per-tool list. Reviewers get a read-only sandbox; inspectors inherit the
-    # parent sandbox so browsers and profilers can run, and rely on their instructions not to edit.
-    if not caps(role)['run']:
-        pieces.append('sandbox_mode = "read-only"')
+    pieces = [f'name = {toml_string(role)}', f'description = {toml_string(r["description"])}']
+    if r['codex_model']:
+        pieces.append(f'model = {toml_string(r["codex_model"])}')
+    if r['codex_effort']:
+        pieces.append(f'model_reasoning_effort = {toml_string(r["codex_effort"])}')
     pieces.append(f'developer_instructions = {toml_string(body(role))}')
+    if not caps(role)['run']:
+        pieces += ['', '[features]', 'shell_tool = false']
     return '\n'.join(pieces) + '\n'
-
-
-def codex_registration(role):
-    r = ROLES[role]
-    return (f'\n[agents.{toml_string(role)}]\n'
-            f'description = {toml_string(r["description"])}\n'
-            f'config_file = {toml_string("./agents/" + role + ".toml")}\n')
 
 
 def claude_agent(role):
@@ -221,73 +213,24 @@ def main(argv=None):
                 conflicts.append(str(rel))
         else:
             changes[rel] = content
-    # Append to existing Codex config; never overwrite it.
-    backup_needed = False
-    if 'codex' in platforms:
-        target = project / CODEX_CONFIG
-        existing = _read(target) if target.exists() else ''
-        try:
-            parsed = tomllib.loads(existing)
-        except tomllib.TOMLDecodeError as e:
-            conflicts.append(f'{CODEX_CONFIG} (invalid existing TOML: {e})')
-            parsed = {}
-        existing_agents = parsed.get('agents', {})
-        to_append = []
-        for role in roles:
-            if role in existing_agents:
-                # Preserve existing registration without modification, even when it points elsewhere.
-                print(f'KEEP     existing registration: agents.{role}')
-            else:
-                to_append.append(codex_registration(role))
-        if to_append:
-            merged = existing.rstrip() + '\n' + ''.join(to_append)
-            try:
-                tomllib.loads(merged)
-            except tomllib.TOMLDecodeError as e:
-                conflicts.append(f'{CODEX_CONFIG} (merged TOML invalid: {e})')
-            changes[CODEX_CONFIG] = merged
-            # Check every precondition of the config write now, before any file is written.
-            if (project / CODEX_TEMP).exists():
-                conflicts.append(f'{CODEX_TEMP} (leftover temp file from an interrupted run; remove it)')
-            if target.exists():
-                if (project / CODEX_BACKUP).exists():
-                    print(f'KEEP     {CODEX_BACKUP} (original pre-bootstrap config already backed up)')
-                else:
-                    backup_needed = True
     if conflicts:
         print('Conflicts detected; nothing changed:', file=sys.stderr)
         for c in conflicts:
             print(f'  {c}', file=sys.stderr)
-        if any(c in map(str, files) for c in conflicts):
-            print('Use --skip-existing to leave conflicting agent files untouched.', file=sys.stderr)
+        print('Use --skip-existing to leave conflicting agent files untouched.', file=sys.stderr)
         return 2
     print(f'Project: {project}\nPlatforms: {", ".join(platforms)}\nRoles: {", ".join(roles)}')
-    if backup_needed:
-        print(f'{"BACKUP" if args.apply else "WOULD BACKUP"} {CODEX_CONFIG} -> {CODEX_BACKUP}')
     for rel in changes:
         print(f'{"WRITE" if args.apply else "WOULD WRITE"} {rel}')
     if not args.apply:
         print('\nDry-run only. Add --apply to install.')
         return 0
-    # Write the Codex config last: an agent file without a registration is harmless,
-    # while a registration without its file is not.
-    order = sorted(changes, key=lambda rel: rel == CODEX_CONFIG)
-    for rel in order:
-        content = changes[rel]
+    for rel, content in changes.items():
         dest = project / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if rel == CODEX_CONFIG:
-            if backup_needed:
-                with (project / CODEX_BACKUP).open('xb') as f:
-                    f.write(dest.read_bytes())
-            temp = project / CODEX_TEMP
-            with temp.open('x', encoding='utf-8') as f:
-                f.write(content)
-            temp.replace(dest)
-        else:
-            # Exclusive create: never overwrite a file that appeared after planning.
-            with dest.open('x', encoding='utf-8') as f:
-                f.write(content)
+        # Exclusive create: never overwrite a file that appeared after planning.
+        with dest.open('x', encoding='utf-8') as f:
+            f.write(content)
     print('\nInstalled. Restart your coding tool and verify agent discovery and model availability.')
     return 0
 
