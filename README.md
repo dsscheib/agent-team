@@ -7,7 +7,7 @@ A **stack-neutral, opt-in** installer for project-local subagents in **Codex CLI
 From this extracted package:
 
 ```bash
-python3 bootstrap.py --list --project ~/Projects/my-project
+python3 bootstrap.py --list
 python3 bootstrap.py --project ~/Projects/my-project --platforms codex --preset core
 python3 bootstrap.py --project ~/Projects/my-project --platforms codex --preset core --with-agents-md --apply
 ```
@@ -43,10 +43,23 @@ To generate initial project instructions only if missing, use `--with-agents-md`
 - Agent files are created only when absent. Identical existing files are left alone.
 - A conflicting existing agent file stops the whole install; `--skip-existing` leaves that file untouched.
 - Codex registrations are appended to `.codex/config.toml` only for absent `[agents."role"]` entries; existing entries stay as-is.
-- The existing Codex config is backed up as `.codex/config.toml.pre-agent-bootstrap.bak` before the first change. If that backup already exists, the installer refuses to overwrite it.
+- The existing Codex config is backed up as `.codex/config.toml.pre-agent-bootstrap.bak` before the first change. Later installs keep that original backup and never overwrite it. A leftover `.codex/config.toml.agent-bootstrap.tmp` from an interrupted run stops the install before anything is written.
+- Every precondition is checked before the first write. Agent files are written before the Codex registrations, so a failure never leaves a registration pointing at a missing file.
 - The installer never changes approval settings, sandbox defaults, or primary orchestrator model.
 - Agent definitions include recommended models, but **model availability and exact configuration support must be verified in your installed clients**.
 - Read-only specialist tool restrictions are best-effort and do not secure credentials or environments accessible through other tools.
+
+## Role kinds
+
+Each role in `catalog/roles.json` has a `kind` that sets its tool access on every platform:
+
+| Kind | Edits files | Runs commands | Roles |
+|---|---|---|---|
+| `implementer`, `tester` | Yes | Yes | backend, frontend, database, devops, documentation, integration-tester |
+| `inspector` | No | Yes (tests, browsers, profilers) | frontend-tester, performance |
+| `reviewer` | No | No | security, ux-designer, auditor-advisor |
+
+Codex has no per-agent tool list: reviewers get `sandbox_mode = "read-only"`, and inspectors inherit the parent's sandbox so they can run browsers and profilers. For inspectors on Codex, "do not edit" is enforced only by their instructions.
 
 ## Where files go
 
@@ -61,8 +74,8 @@ To generate initial project instructions only if missing, use `--with-agents-md`
 
 - Codex defaults: Sol for most engineering, Terra for UI/docs, Astra for security and auditor/advisor; reasoning medium/high/xhigh as appropriate.
 - Claude defaults: Sonnet for implementation, Opus for security/audit. These use documented family aliases, **not** pinned versions; modify per project if desired.
-- Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for security/audit. Confirm your Copilot subscription supports it.
-- Antigravity defaults: `model: inherit` because named Carbon/Hydrogen tier pinning is not documented in custom-agent YAML. Select the desired parent model in the UI/CLI; verify which model subagents actually use. `inherit` does not guarantee a distinct cheaper model.
+- Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for security/audit. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
+- Antigravity defaults: `model: inherit`. The subagent docs also accept `flash` and `pro`; set `antigravity_model` per role to pin a tier. `inherit` does not guarantee a distinct cheaper model. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
 
 ## Verification
@@ -81,7 +94,7 @@ The installer preserves existing `[agents]` settings and only appends missing re
 
 Edit `catalog/roles.json` to change descriptions or recommended model defaults, and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. `catalog/practices.md` provides shared principles. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
 
-Documentation references:
+Documentation references (agent file fields and tool names for Copilot CLI and Antigravity checked 2026-11-13):
 - https://developers.openai.com/codex/
 - https://code.claude.com/docs/en/sub-agents
 - https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli
