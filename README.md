@@ -42,9 +42,7 @@ To generate initial project instructions only if missing, use `--with-agents-md`
 - Project-local files only; **never writes to your home directory**.
 - Agent files are created only when absent. Identical existing files are left alone.
 - A conflicting existing agent file stops the whole install; `--skip-existing` leaves that file untouched.
-- Codex registrations are appended to `.codex/config.toml` only for absent `[agents."role"]` entries; existing entries stay as-is.
-- The existing Codex config is backed up as `.codex/config.toml.pre-agent-bootstrap.bak` before the first change. Later installs keep that original backup and never overwrite it. A leftover `.codex/config.toml.agent-bootstrap.tmp` from an interrupted run stops the install before anything is written.
-- Every precondition is checked before the first write. Agent files are written before the Codex registrations, so a failure never leaves a registration pointing at a missing file.
+- Every file the installer writes is a new agent file. It never edits `.codex/config.toml` or any other existing file, so there is nothing to back up.
 - The installer never changes approval settings, sandbox defaults, or primary orchestrator model.
 - Agent definitions include recommended models, but **model availability and exact configuration support must be verified in your installed clients**.
 - Read-only specialist tool restrictions are best-effort and do not secure credentials or environments accessible through other tools.
@@ -59,13 +57,13 @@ Each role in `catalog/roles.json` has a `kind` that sets its tool access on ever
 | `inspector` | No | Yes (tests, browsers, profilers) | frontend-tester, performance |
 | `reviewer` | No | No | security, ux-designer, auditor-advisor |
 
-Codex has no per-agent tool list: reviewers get `sandbox_mode = "read-only"`, and inspectors inherit the parent's sandbox so they can run browsers and profilers. For inspectors on Codex, "do not edit" is enforced only by their instructions.
+Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not override the parent session. Reviewers get `[features] shell_tool = false`, so they cannot run commands. Codex has no documented way to stop an agent editing files, so on Codex the no-edit limit for inspectors and reviewers rests on their instructions.
 
 ## Where files go
 
 | Platform | Project-local files |
 |---|---|
-| Codex | `.codex/agents/<role>.toml`, plus `[agents."role"]` in `.codex/config.toml` |
+| Codex | `.codex/agents/<role>.toml` (standalone; Codex discovers it without a `config.toml` entry) |
 | Claude Code | `.claude/agents/<role>.md` |
 | Copilot CLI | `.github/agents/<role>.agent.md` |
 | Antigravity | `.agents/agents/<role>.md` |
@@ -88,14 +86,14 @@ Codex has no per-agent tool list: reviewers get `sandbox_mode = "read-only"`, an
 
 ### Codex-specific caution
 
-The installer preserves existing `[agents]` settings and only appends missing registrations. Check `/debug-config` and `/status` in your installed CLI if available, then test spawning a named agent. Registered roles may not run unless the relevant multi-agent feature is enabled in your Codex version.
+Subagents are on by default in current Codex releases; `agents.enabled = false` in your configuration turns them off. Test spawning a named agent before relying on it. The model names in `catalog/roles.json` are not checked against the Codex docs; clear `codex_model` to use the parent session's model.
 
 ## Customization
 
 Edit `catalog/roles.json` to change descriptions or recommended model defaults, and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. `catalog/practices.md` provides shared principles. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
 
-Documentation references (agent file fields and tool names for Copilot CLI and Antigravity checked 2026-11-13):
-- https://developers.openai.com/codex/
+Documentation references (agent file fields and tool names for Codex, Copilot CLI and Antigravity checked 2026-11-13):
+- https://learn.chatgpt.com/docs/agent-configuration/subagents
 - https://code.claude.com/docs/en/sub-agents
 - https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli
 - https://antigravity.google/docs/subagents
