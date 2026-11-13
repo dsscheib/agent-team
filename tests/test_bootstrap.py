@@ -13,33 +13,44 @@ b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
 class BootstrapTests(unittest.TestCase):
-    def test_all_generated_toml_parses(self):
+    def test_codex_agents_are_standalone_files(self):
         for role in b.ROLES:
-            self.assertEqual(tomllib.loads(b.codex_agent(role))['model'], b.ROLES[role]['codex_model'])
-            self.assertEqual(tomllib.loads(b.codex_registration(role))['agents'][role]['config_file'], f'./agents/{role}.toml')
+            parsed = tomllib.loads(b.codex_agent(role))
+            self.assertEqual(parsed['name'], role)
+            self.assertEqual(parsed['description'], b.ROLES[role]['description'])
+            self.assertIn('developer_instructions', parsed)
+            self.assertNotIn('sandbox_mode', parsed)
+            runs = b.caps(role)['run']
+            self.assertEqual(parsed.get('features', {}).get('shell_tool', True), runs)
+
+    def test_leaves_codex_config_and_existing_agents_alone(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p/'.codex/agents').mkdir(parents=True)
+            config = 'model = "custom-parent"\n[agents]\nmax_threads = 2\n'
+            (p/'.codex/config.toml').write_text(config)
+            (p/'.codex/agents/existing.toml').write_text('name = "existing"\n')
+            args = ['--project',td,'--platforms','codex','claude','copilot','antigravity','--roles','backend','auditor-advisor','--apply']
+            self.assertEqual(b.main(args),0)
+            self.assertEqual((p/'.codex/config.toml').read_text(), config)
+            self.assertEqual((p/'.codex/agents/existing.toml').read_text(),'name = "existing"\n')
+            for path in ('.codex/agents/backend.toml', '.github/agents/auditor-advisor.agent.md',
+                         '.agents/agents/auditor-advisor.md', '.claude/agents/auditor-advisor.md'):
+                self.assertTrue((p/path).exists(), path)
+            self.assertFalse(any(p.glob('.codex/*.bak')))
+            self.assertEqual(b.main(args),0)
+
+    def test_second_install_adds_roles(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            self.assertEqual(b.main(['--project',td,'--roles','backend','--apply']),0)
+            self.assertEqual(b.main(['--project',td,'--roles','backend','frontend','--apply']),0)
+            self.assertEqual(sorted(f.name for f in (p/'.codex/agents').iterdir()), ['backend.toml','frontend.toml'])
 
     def test_dry_run_does_not_write(self):
         with tempfile.TemporaryDirectory() as td:
             self.assertEqual(b.main(['--project',td,'--preset','core']),0)
             self.assertEqual(list(Path(td).iterdir()),[])
-
-    def test_preserves_config_and_existing_agents(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td)
-            (p/'.codex/agents').mkdir(parents=True)
-            (p/'.codex/config.toml').write_text('model = "custom-parent"\n[agents.existing]\ndescription="Existing"\nconfig_file="./agents/existing.toml"\n')
-            (p/'.codex/agents/existing.toml').write_text('model = "custom"\n')
-            self.assertEqual(b.main(['--project',td,'--platforms','codex','claude','copilot','antigravity','--roles','backend','auditor-advisor','--apply']),0)
-            parsed=tomllib.loads((p/'.codex/config.toml').read_text())
-            self.assertEqual(parsed['model'],'custom-parent')
-            self.assertEqual(parsed['agents']['existing']['description'],'Existing')
-            self.assertIn('backend',parsed['agents'])
-            self.assertEqual((p/'.codex/agents/existing.toml').read_text(),'model = "custom"\n')
-            self.assertTrue((p/'.codex/config.toml.pre-agent-bootstrap.bak').exists())
-            self.assertTrue((p/'.github/agents/auditor-advisor.agent.md').exists())
-            self.assertTrue((p/'.agents/agents/auditor-advisor.md').exists())
-            self.assertTrue((p/'.claude/agents/auditor-advisor.md').exists())
-            self.assertEqual(b.main(['--project',td,'--platforms','codex','claude','copilot','antigravity','--roles','backend','auditor-advisor','--apply']),0)
 
     def test_conflicts_do_not_change_project(self):
         with tempfile.TemporaryDirectory() as td:
@@ -51,28 +62,6 @@ class BootstrapTests(unittest.TestCase):
             self.assertFalse((p/'.claude/agents/frontend.md').exists())
             self.assertEqual(conflict.read_text(),'custom')
 
-    def test_second_install_adds_roles_and_keeps_original_backup(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td)
-            (p/'.codex').mkdir()
-            (p/'.codex/config.toml').write_text('model = "original"\n')
-            self.assertEqual(b.main(['--project',td,'--roles','backend','--apply']),0)
-            self.assertEqual(b.main(['--project',td,'--roles','frontend','--apply']),0)
-            parsed = tomllib.loads((p/'.codex/config.toml').read_text())
-            self.assertIn('backend', parsed['agents'])
-            self.assertIn('frontend', parsed['agents'])
-            self.assertEqual((p/'.codex/config.toml.pre-agent-bootstrap.bak').read_text(),'model = "original"\n')
-
-    def test_leftover_temp_file_stops_before_any_write(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td)
-            (p/'.codex').mkdir()
-            (p/'.codex/config.toml.agent-bootstrap.tmp').write_text('stale')
-            self.assertEqual(b.main(['--project',td,'--platforms','codex','claude','--roles','backend','--apply']),2)
-            self.assertFalse((p/'.codex/agents').exists())
-            self.assertFalse((p/'.claude').exists())
-            self.assertFalse((p/'.codex/config.toml').exists())
-
     def test_inspectors_run_commands_but_do_not_edit(self):
         claude = b.claude_agent('frontend-tester')
         self.assertIn('Bash', claude)
@@ -81,8 +70,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn('"edit"', b.copilot_agent('performance'))
         self.assertIn('run_command', b.antigravity_agent('performance'))
         self.assertNotIn('replace_file_content', b.antigravity_agent('performance'))
-        self.assertNotIn('sandbox_mode', b.codex_agent('performance'))
-        self.assertIn('sandbox_mode = "read-only"', b.codex_agent('security'))
+        self.assertNotIn('shell_tool', b.codex_agent('performance'))
+        self.assertIn('shell_tool = false', b.codex_agent('security'))
         self.assertNotIn('Bash', b.claude_agent('security').split('---')[1])
 
     def test_only_documented_tool_names(self):
