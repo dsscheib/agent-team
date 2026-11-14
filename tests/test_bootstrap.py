@@ -138,7 +138,8 @@ class BootstrapTests(unittest.TestCase):
                 for path in (f'.codex/agents/{role}.toml', f'.claude/agents/{role}.md',
                              f'.github/agents/{role}.agent.md', f'.agents/agents/{role}.md'):
                     self.assertTrue((p/path).is_file(), path)
-            for tool in ('tools/kicad/verify.py', 'tools/kicad/fabrication_export.py', 'tools/freecad/inspect_model.py',
+            for tool in ('tools/kicad/verify.py', 'tools/kicad/fabrication_export.py', 'tools/kicad/check_availability.py',
+                         'tools/freecad/inspect_model.py',
                          'tools/freecad/check_build_volume.py', 'docs/electronics/release-checklist.md',
                          'docs/mechanical/slicing.md', 'scripts/create_parametric_plate.py'):
                 self.assertTrue((p/tool).is_file(), tool)
@@ -203,6 +204,85 @@ class BootstrapTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(check.main([str(report)]), 0)  # fits when rotated onto Z
                 self.assertEqual(check.main([str(report), '--volume', '200', '200', '200']), 2)
+
+    def test_availability_credentials_env_wins_and_files_fill_gaps(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d/'digikey.env').write_text('DIGIKEY_CLIENT_ID=file-id\nexport DIGIKEY_CLIENT_SECRET="file-secret"\n# c\n')
+            (d/'mouser.env').write_text('MOUSER_API_KEY=file-key\nUNRELATED=x\n')
+            for f in d.iterdir():
+                f.chmod(0o600)
+            creds, warnings = avail.load_credentials(d, {'DIGIKEY_CLIENT_ID': 'env-id'})
+            self.assertEqual(creds, {'DIGIKEY_CLIENT_ID': 'env-id', 'DIGIKEY_CLIENT_SECRET': 'file-secret',
+                                     'MOUSER_API_KEY': 'file-key'})
+            self.assertEqual(warnings, [])
+            (d/'mouser.env').chmod(0o644)
+            self.assertEqual(len(avail.load_credentials(d, {})[1]), 1)
+            self.assertEqual(avail.load_credentials(d/'missing', {}), ({}, []))
+
+    def test_availability_reads_bom_and_merges_repeated_mpns(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        with tempfile.TemporaryDirectory() as td:
+            bom = Path(td)/'bom.csv'
+            bom.write_text('Reference,Value,MPN,Qty\nU1,6502,W65C02S6TPG-14,1\nC1,0.1u,~,3\n'
+                           'U4,74HC00,SN74HC00N,1\nU9,74HC00,sn74hc00n,2\n')
+            self.assertEqual(avail.read_bom(bom), [('W65C02S6TPG-14', 1), ('SN74HC00N', 3)])
+            bom.write_text('Reference,Value\nU1,6502\n')
+            with self.assertRaises(ValueError):
+                avail.read_bom(bom)
+
+    def test_availability_parses_digikey_and_mouser(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        prod = {'ManufacturerProductNumber': 'SN74HC00N', 'Manufacturer': {'Name': 'Texas Instruments'},
+                'QuantityAvailable': 10366, 'ProductStatus': {'Status': 'Active'}, 'DatasheetUrl': 'ds',
+                'ProductUrl': 'url', 'ProductVariations': [
+                    {'DigiKeyProductNumber': 'reel', 'MinimumOrderQuantity': 2000,
+                     'QuantityAvailableforPackageType': 9000, 'StandardPricing': [{'BreakQuantity': 2000, 'UnitPrice': 0.2}]},
+                    {'DigiKeyProductNumber': '296-1563-5-ND', 'MinimumOrderQuantity': 1, 'PackageType': {'Name': 'Tube'},
+                     'QuantityAvailableforPackageType': 1366,
+                     'StandardPricing': [{'BreakQuantity': 1, 'UnitPrice': 0.78}, {'BreakQuantity': 10, 'UnitPrice': 0.6}]}]}
+        row = avail.parse_digikey({'ExactMatches': [prod], 'Products': [prod]}, 'sn74hc00n', 12)
+        self.assertEqual((row['verdict'], row['distributor_pn'], row['unit_price_usd'], row['price_break_qty']),
+                         ('OK', '296-1563-5-ND', 0.6, 10))
+        self.assertNotIn('share', row['note'])
+        self.assertEqual(avail.parse_digikey({'Products': [prod]}, 'SN74HC00N', 2000)['verdict'], 'OK')
+        self.assertEqual(avail.parse_digikey({'Products': [prod]}, 'SN74HC00N', 20000)['verdict'], 'LOW_STOCK')
+        obsolete = dict(prod, ProductStatus={'Status': 'Obsolete'})
+        self.assertEqual(avail.parse_digikey({'Products': [obsolete]}, 'SN74HC00N', 1)['verdict'], 'NOT_ACTIVE')
+        self.assertEqual(avail.parse_digikey({'Products': []}, 'SN74HC00N', 1)['verdict'], 'NOT_FOUND')
+
+        part = {'ManufacturerPartNumber': 'W65C02S6TPG-14', 'Manufacturer': 'Western Design Center (WDC)',
+                'MouserPartNumber': '955-W65C02S6TPG-14', 'Availability': '750 In Stock', 'AvailabilityInStock': '750',
+                'LifecycleStatus': None, 'Min': '1',
+                'PriceBreaks': [{'Quantity': 1, 'Price': '$11.04'}, {'Quantity': 25, 'Price': '$9.50'}]}
+        row = avail.parse_mouser({'Errors': [], 'SearchResults': {'Parts': [part]}}, 'W65C02S6TPG-14', 1)
+        self.assertEqual((row['verdict'], row['stock'], row['lifecycle'], row['unit_price_usd']), ('OK', 750, 'Active', 11.04))
+        nrnd = dict(part, LifecycleStatus='Not Recommended for New Designs')
+        self.assertEqual(avail.parse_mouser({'SearchResults': {'Parts': [nrnd]}}, 'W65C02S6TPG-14', 1)['verdict'], 'NOT_ACTIVE')
+        gone = dict(part, AvailabilityInStock=None, Availability='On Order')
+        self.assertEqual(avail.parse_mouser({'SearchResults': {'Parts': [gone]}}, 'W65C02S6TPG-14', 1)['verdict'], 'OUT_OF_STOCK')
+        with self.assertRaises(LookupError):
+            avail.parse_mouser({'Errors': [{'Message': 'Invalid key'}]}, 'X', 1)
+
+    def test_availability_needs_credentials_and_passes_only_with_an_ok_distributor(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        saved = {k: os.environ.pop(k) for k in avail.SECRET_KEYS if k in os.environ}
+        try:
+            with tempfile.TemporaryDirectory() as td, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(avail.main(['X', '--config-dir', td, '--output', td]), 2)
+        finally:
+            os.environ.update(saved)
+
+        class Fake:
+            def __init__(self, name, verdict):
+                self.name, self.verdict = name, verdict
+            def lookup(self, mpn, needed):
+                return avail.result(mpn, needed, self.name, verdict=self.verdict)
+        rows, failures = avail.check([('A', 2)], [Fake('Digi-Key', 'NOT_FOUND'), Fake('Mouser', 'OK')], 3, 't')
+        self.assertEqual((failures, [r['needed_qty'] for r in rows]), ([], [6, 6]))
+        _, failures = avail.check([('A', 1)], [Fake('Digi-Key', 'LOW_STOCK')], 1, 't')
+        self.assertEqual(failures, ['A'])
 
     def test_domain_scripts_compile(self):
         for script in (ROOT/'domains').rglob('*.py'):
