@@ -187,6 +187,33 @@ def agents_md(roles):
     return '# Project instructions\n\n' + '\n\n'.join(sections) + '\n'
 
 
+# Generated output of the domain helper tools; kept out of git so check runs leave the tree clean.
+GITIGNORE_BLOCK = ('# Generated reports from the KiCad/FreeCAD helper tools (regenerated on each run)\nreports/\n'
+                   '# KiCad per-user and cache files, written by kicad-cli and the editors\n'
+                   '*.kicad_prl\n*.lck\nfp-info-cache\n*-backups/\n')
+
+
+def appendable_blocks(roles, context, tools=False):
+    """Blocks that may be appended to an existing file: {path: [(marker line, block)]}.
+
+    A block is appended only when its marker line is absent, so reruns change nothing.
+    """
+    blocks = {}
+    if context:
+        blocks[Path('AGENTS.md')] = [(s.splitlines()[0].strip(), s)
+                                     for s in (_read(DOMAIN_DIRS[d] / 'AGENTS.md').strip() + '\n' for d in kits(roles))]
+    if tools and kits(roles):
+        blocks[Path('.gitignore')] = [('reports/', GITIGNORE_BLOCK)]
+    return blocks
+
+
+def missing_blocks(existing, blocks):
+    present = {line.strip() for line in existing.splitlines()}
+    if 'reports/' in [m for m, _ in blocks] and present & {'/reports/', 'reports', '/reports'}:
+        present.add('reports/')
+    return [block for marker, block in blocks if marker not in present]
+
+
 def planned_files(platforms, roles, context, tools=False):
     files = {}
     for platform in platforms:
@@ -200,6 +227,8 @@ def planned_files(platforms, roles, context, tools=False):
             base = DOMAIN_DIRS[domain] / 'files'
             for src in sorted(f for f in base.rglob('*') if f.is_file() and '__pycache__' not in f.parts):
                 files[src.relative_to(base)] = _read(src)
+        if kits(roles):
+            files[Path('.gitignore')] = GITIGNORE_BLOCK
     return files
 
 
@@ -210,7 +239,8 @@ def main(argv=None):
     p.add_argument('--preset', nargs='+', choices=PRESETS, help='One or more presets; roles are combined')
     p.add_argument('--roles', nargs='+', metavar='ROLE', help='Additional role identifiers')
     p.add_argument('--with-agents-md', action='store_true',
-                   help='Create a starter AGENTS.md (with KiCad/FreeCAD sections for those roles) only if absent')
+                   help='Create a starter AGENTS.md with KiCad/FreeCAD sections for those roles; '
+                        'if AGENTS.md exists, append only the domain sections it lacks')
     p.add_argument('--with-tools', action='store_true',
                    help='Also install the helper scripts and docs of each KiCad/FreeCAD domain selected')
     p.add_argument('--apply', action='store_true', help='Actually install (default: preview/dry-run)')
@@ -238,13 +268,21 @@ def main(argv=None):
         p.error(str(ex))
     platforms = list(dict.fromkeys(args.platforms))
     files = planned_files(platforms, roles, args.with_agents_md, args.with_tools)
+    appendable = appendable_blocks(roles, args.with_agents_md, args.with_tools)
     changes = {}
+    appends = {}
     conflicts = []
     for rel, content in files.items():
         target = project / rel
         if target.exists():
             if target.is_file() and _read(target) == content:
                 print(f'UNCHANGED {rel}')
+            elif target.is_file() and rel in appendable:
+                missing = missing_blocks(_read(target), appendable[rel])
+                if missing:
+                    appends[rel] = missing
+                else:
+                    print(f'UNCHANGED {rel} (already has the sections)')
             elif args.skip_existing:
                 print(f'SKIP     {rel} (exists)')
             else:
@@ -262,6 +300,8 @@ def main(argv=None):
         print(f'Note: add --with-tools for the {"/".join(kits(roles))} helper scripts the agents refer to.')
     for rel in changes:
         print(f'{"WRITE" if args.apply else "WOULD WRITE"} {rel}')
+    for rel, blocks in appends.items():
+        print(f'{"APPEND" if args.apply else "WOULD APPEND"} {rel} ({len(blocks)} section(s))')
     if not args.apply:
         print('\nDry-run only. Add --apply to install.')
         return 0
@@ -273,6 +313,12 @@ def main(argv=None):
             f.write(content)
         if content.startswith('#!'):
             dest.chmod(dest.stat().st_mode | 0o111)
+    for rel, blocks in appends.items():
+        dest = project / rel
+        current = _read(dest)
+        separator = '' if not current else ('\n' if current.endswith('\n') else '\n\n')
+        with dest.open('a', encoding='utf-8') as f:
+            f.write(separator + '\n'.join(blocks))
     print('\nInstalled. Restart your coding tool and verify agent discovery and model availability.')
     return 0
 

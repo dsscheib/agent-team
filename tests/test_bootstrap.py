@@ -163,6 +163,48 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue((p/'tools/kicad').is_dir())
             self.assertFalse((p/'tools/freecad').exists())
 
+    def test_existing_agents_md_gets_missing_domain_sections_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p/'AGENTS.md').write_text('# Agent instructions\n\nProject rules.')
+            args = ['--project', td, '--preset', 'kicad-core', '--with-agents-md', '--apply']
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(args), 0)
+            text = (p/'AGENTS.md').read_text()
+            self.assertTrue(text.startswith('# Agent instructions\n\nProject rules.\n\n## Electronics (KiCad)'))
+            self.assertNotIn('## Tech stack', text)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(args), 0)
+                self.assertEqual(b.main(args[:-1] + ['--roles', 'cad-engineer', '--apply']), 0)
+            text = (p/'AGENTS.md').read_text()
+            self.assertEqual(text.count('## Electronics (KiCad)'), 1)
+            self.assertEqual(text.count('## Mechanical (FreeCAD)'), 1)
+
+    def test_tools_keep_reports_out_of_git(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(['--project', td, '--preset', 'kicad-core', '--with-tools', '--apply']), 0)
+            self.assertEqual((p/'.gitignore').read_text(), b.GITIGNORE_BLOCK)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p/'.gitignore').write_text('node_modules/')
+            args = ['--project', td, '--preset', 'freecad-core', '--with-tools', '--apply']
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(args), 0)
+                self.assertEqual(b.main(args), 0)
+            self.assertEqual((p/'.gitignore').read_text(), 'node_modules/\n\n' + b.GITIGNORE_BLOCK)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p/'.gitignore').write_text('/reports\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(['--project', td, '--preset', 'kicad-core', '--with-tools', '--apply']), 0)
+            self.assertEqual((p/'.gitignore').read_text(), '/reports\n')
+        with tempfile.TemporaryDirectory() as td:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(['--project', td, '--preset', 'core', '--with-tools', '--apply']), 0)
+            self.assertFalse((Path(td)/'.gitignore').exists())
+
     def test_mixed_agents_md_keeps_software_starter(self):
         text = b.agents_md(['backend', 'cad-engineer'])
         self.assertIn('## Tech stack', text)
