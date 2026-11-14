@@ -307,6 +307,53 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             avail.parse_mouser({'Errors': [{'Message': 'Invalid key'}]}, 'X', 1)
 
+    def test_availability_parses_feeder(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        prod = {'PartId': 5, 'ManufacturerProductNumber': 'RC0805FR-0710KL', 'Manufacturer': 'Yageo',
+                'QuantityOnHand': 50, 'QuantityReserved': 4, 'QuantityAvailable': 46, 'UnitPrice': 0.05,
+                'Location': {'Path': 'Cabinet 1 › Bin A-01', 'Section': 'Front'},
+                'ProductUrl': 'https://feeder.example/parts/5'}
+        data = {'Results': [{'PartNumber': 'rc0805fr-0710kl', 'Products': [prod]}]}
+        row = avail.parse_feeder(data, 'rc0805fr-0710kl', 40)
+        self.assertEqual((row['verdict'], row['stock'], row['distributor'], row['distributor_pn'], row['unit_price_usd'],
+                          row['lifecycle'], row['product_url']),
+                         ('OK', 46, 'Feeder', 'part 5', 0.05, 'on hand', 'https://feeder.example/parts/5'))
+        self.assertIn('Cabinet 1 › Bin A-01 (Front): 46', row['note'])
+        self.assertIn('4 more reserved', row['note'])
+        self.assertEqual(avail.parse_feeder(data, 'X', 47)['verdict'], 'LOW_STOCK')
+        # Stored in two places: the available quantities add up; a part not put away has no location.
+        loose = dict(prod, PartId=9, QuantityReserved=0, QuantityAvailable=10, Location=None)
+        two = avail.parse_feeder({'Results': [{'Products': [prod, loose]}]}, 'X', 56)
+        self.assertEqual((two['verdict'], two['stock'], two['distributor_pn']), ('OK', 56, 'part 5, part 9'))
+        self.assertIn('not put away: 10', two['note'])
+        none_left = dict(prod, QuantityReserved=50, QuantityAvailable=0)
+        self.assertEqual(avail.parse_feeder({'Results': [{'Products': [none_left]}]}, 'X', 1)['verdict'], 'OUT_OF_STOCK')
+        self.assertEqual(avail.parse_feeder({'Results': [{'Products': []}]}, 'X', 1)['verdict'], 'NOT_FOUND')
+        self.assertEqual(avail.parse_feeder({}, 'X', 1)['verdict'], 'NOT_FOUND')
+
+    def test_availability_feeder_url_must_be_https_except_on_this_computer(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        self.assertEqual(avail.feeder_base_url('https://feeder.example/'), 'https://feeder.example')
+        self.assertEqual(avail.feeder_base_url('http://localhost:8085'), 'http://localhost:8085')
+        self.assertEqual(avail.feeder_base_url('http://127.0.0.1:8085/'), 'http://127.0.0.1:8085')
+        for bad in ('http://feeder.example', 'feeder.example', 'ftp://feeder.example', 'https://'):
+            with self.assertRaises(ValueError):
+                avail.feeder_base_url(bad)
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td)/'feeder.env').write_text('FEEDER_URL=https://feeder.example\nFEEDER_API_KEY=feeder_fake\n')
+            (Path(td)/'feeder.env').chmod(0o600)
+            creds, _ = avail.load_credentials(Path(td), {})
+            self.assertEqual(creds, {'FEEDER_URL': 'https://feeder.example', 'FEEDER_API_KEY': 'feeder_fake'})
+            saved = {k: os.environ.pop(k) for k in avail.SECRET_KEYS if k in os.environ}
+            try:
+                (Path(td)/'feeder.env').write_text('FEEDER_URL=http://feeder.example\nFEEDER_API_KEY=feeder_fake\n')
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(avail.main(['X', '--config-dir', td, '--output', td]), 2)
+                self.assertIn('https://', err.getvalue())
+                self.assertNotIn('feeder_fake', err.getvalue())
+            finally:
+                os.environ.update(saved)
+
     def test_availability_needs_credentials_and_passes_only_with_an_ok_distributor(self):
         avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
         saved = {k: os.environ.pop(k) for k in avail.SECRET_KEYS if k in os.environ}
@@ -325,6 +372,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual((failures, [r['needed_qty'] for r in rows]), ([], [6, 6]))
         _, failures = avail.check([('A', 1)], [Fake('Digi-Key', 'LOW_STOCK')], 1, 't')
         self.assertEqual(failures, ['A'])
+        _, failures = avail.check([('A', 1)], [Fake('Feeder', 'OK'), Fake('Digi-Key', 'NOT_ACTIVE')], 1, 't')
+        self.assertEqual(failures, [])
 
     def test_domain_scripts_compile(self):
         for script in (ROOT/'domains').rglob('*.py'):
