@@ -46,7 +46,7 @@ python3 bootstrap.py --project ~/Projects/parts --platforms codex \
   --preset core --roles database devops --apply
 ```
 
-To generate initial project instructions only if missing, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. Existing project instructions are never overwritten.
+To generate initial project instructions, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. If `AGENTS.md` already exists (for example from another guidance package), only the domain sections it lacks are appended, matched by their heading; nothing else in it is changed, and reruns add nothing.
 
 ## KiCad and FreeCAD kits
 
@@ -57,7 +57,7 @@ To generate initial project instructions only if missing, use `--with-agents-md`
 | KiCad | `tools/kicad/doctor.py` (environment check), `tools/kicad/verify.py` (ERC on each root schematic named by a `.kicad_pro`, DRC with schematic parity; reports in `reports/kicad/`), `tools/kicad/fabrication_export.py` (Gerbers and drills to `reports/fab-staging/`, never orders), `tools/kicad/check_availability.py` (stock and lifecycle by MPN or BOM CSV through the Digi-Key and Mouser APIs, read-only, report in `reports/kicad/`; credentials from the environment or `*.env` files in `$DISTRIBUTOR_API_DIR`, default `~/.config/distributor-api`), `docs/electronics/design-requirements.md`, `docs/electronics/release-checklist.md` |
 | FreeCAD | `tools/freecad/doctor.py` (finds FreeCAD/OrcaSlicer on PATH or as Flatpaks), `tools/freecad/inspect_model.py` (run with `FreeCADCmd`; shape validity, solids, volume, envelope to `reports/`), `tools/freecad/check_build_volume.py` (`--volume X Y Z`, default Ender-3 S1 Pro 220 x 220 x 270 mm), `scripts/create_parametric_plate.py` (example sketch + pad with STEP/STL export), `docs/mechanical/design-requirements.md`, `docs/mechanical/slicing.md` |
 
-Kit files follow the same rules as agent files: created only when absent, identical files left alone, conflicts stop the install unless `--skip-existing`.
+Kit files follow the same rules as agent files: created only when absent, identical files left alone, conflicts stop the install unless `--skip-existing`. The tools write generated reports under `reports/`, so `--with-tools` also adds `reports/`, plus KiCad's per-user and cache files (`*.kicad_prl`, `*.lck`, `fp-info-cache`, `*-backups/`), to `.gitignore` (creating it, or appending if the entry is missing) to keep check runs from dirtying the tree.
 
 - KiCad schematics have no IPC editing API, so agents edit `.kicad_sch` files natively and validate with `kicad-cli`. Live PCB edits use the KiCad 10 IPC API with a running PCB Editor (enable the API server in Preferences > Plugins) through `kicad-python` (`import kipy`). Agents expect it in a venv at `~/.local/share/kicad-python`, or at the interpreter named by `$KICAD_PYTHON`; `tools/kicad/doctor.py` reports which one it found and whether the editor answers. ERC/DRC passing is not proof of electrical correctness or fab readiness.
 - With the FreeCAD Flatpak, run scripts as `flatpak run --command=FreeCADCmd org.freecad.FreeCAD SCRIPT.py ARGS`, from inside the project: the sandbox has its own `/tmp`.

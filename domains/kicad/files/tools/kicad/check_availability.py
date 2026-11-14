@@ -397,7 +397,7 @@ def main(argv=None):
     out_dir.mkdir(parents=True, exist_ok=True)
     report = out_dir / f'availability-{now.strftime("%Y%m%dT%H%M%SZ")}.csv'
     with open(report, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
+        writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS, lineterminator='\n')
         writer.writeheader()
         writer.writerows(rows)
 
