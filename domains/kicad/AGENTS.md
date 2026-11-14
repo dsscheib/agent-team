@@ -5,6 +5,7 @@
 - Checks: `python3 tools/kicad/verify.py --project .` (ERC + DRC with schematic parity, reports in `reports/kicad/`)
 - Schematics: edit native `.kicad_sch` files carefully, preserving UUIDs and references; validate through KiCad
 - PCB: prefer the KiCad 10 IPC API with an open PCB Editor (enable the API server in Preferences > Plugins)
+- IPC scripts: run with the kicad-python venv, `~/.local/share/kicad-python/bin/python` (override with `$KICAD_PYTHON`); `doctor.py` shows which one it found and whether the editor answers
 - Requirements: `docs/electronics/design-requirements.md`; release gate: `docs/electronics/release-checklist.md`
 
 ### Project facts (fill in before design)
