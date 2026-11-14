@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Check stock and lifecycle status of parts at Digi-Key and Mouser. Read-only: never orders.
+"""Check stock and lifecycle status of parts at Digi-Key and Mouser, and stock on hand in a Feeder
+parts inventory. Read-only: never orders and never changes Feeder.
 
 Parts are looked up by manufacturer part number (MPN), given on the command line or read from a
 BOM CSV with an MPN column (and optionally a quantity column). A line passes when at least one
-distributor has the part Active and in stock for the needed quantity (per-board qty x --boards).
+distributor has the part Active and in stock for the needed quantity (per-board qty x --boards), or
+Feeder has that quantity available (on hand minus what its projects have reserved).
 
 Credentials come from the environment, or from KEY=VALUE *.env files in $DISTRIBUTOR_API_DIR
 (default ~/.config/distributor-api). Environment variables win over files.
   Digi-Key: DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET  (Product Information API v4, client credentials)
   Mouser:   MOUSER_API_KEY                            (Search API v1)
-A distributor without credentials is skipped. Secrets are never printed or written to reports.
+  Feeder:   FEEDER_URL, FEEDER_API_KEY                 (parts API v1; key from `feeder api-key create`)
+A source without credentials is skipped. Secrets are never printed or written to reports.
+FEEDER_URL must be https:// unless it names this computer (localhost, 127.0.0.1, [::1]).
 
 Writes reports/kicad/availability-<UTC timestamp>.csv and prints a summary.
 Exit status: 0 every line passes, 1 some line fails, 2 usage or configuration error.
@@ -29,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_CONFIG_DIR = Path.home() / '.config/distributor-api'
-SECRET_KEYS = ('DIGIKEY_CLIENT_ID', 'DIGIKEY_CLIENT_SECRET', 'MOUSER_API_KEY')
+SECRET_KEYS = ('DIGIKEY_CLIENT_ID', 'DIGIKEY_CLIENT_SECRET', 'MOUSER_API_KEY', 'FEEDER_URL', 'FEEDER_API_KEY')
 MPN_COLUMNS = ('mpn', 'manufacturer part number', 'manufacturer_part_number', 'mfr part number',
                'mfr. #', 'mfr #', 'mfg part number', 'part number', 'manufacturer_pn', 'mfr_pn')
 QTY_COLUMNS = ('qty', 'quantity', 'qty per board', 'count')
@@ -327,6 +331,60 @@ def parse_mouser(data, mpn, needed):
                   note='; '.join(note))
 
 
+# ---------------------------------------------------------------- Feeder
+
+def feeder_base_url(url):
+    """Return the Feeder base URL without a trailing slash; refuse plain http to another host,
+    which would send the API key in the clear."""
+    parsed = urllib.parse.urlsplit(url.strip())
+    local = parsed.hostname in ('localhost', '127.0.0.1', '::1')
+    if parsed.scheme != 'https' and not (parsed.scheme == 'http' and local):
+        raise ValueError('FEEDER_URL must start with https:// (http:// only for localhost)')
+    if not parsed.hostname:
+        raise ValueError('FEEDER_URL has no host name')
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip('/'), '', ''))
+
+
+class Feeder:
+    """The owner's own parts inventory: what is on hand, reserved and where it is stored."""
+    name = 'Feeder'
+
+    def __init__(self, url, api_key):
+        self.url, self.api_key = feeder_base_url(url), api_key
+
+    def lookup(self, mpn, needed):
+        data = http_json(self.url + '/api/v1/search/partnumber', {'PartNumbers': [mpn]},
+                         {'Authorization': f'Bearer {self.api_key}'})
+        return parse_feeder(data, mpn, needed)
+
+
+def parse_feeder(data, mpn, needed):
+    # Feeder matches MPNs ignoring case, punctuation and packaging suffixes, so every product it
+    # returns is this part; more than one means it is stored in more than one place.
+    results = data.get('Results') or []
+    products = (results[0].get('Products') if results else None) or []
+    if not products:
+        return result(mpn, needed, 'Feeder', verdict='NOT_FOUND', note='not in the inventory')
+    available = sum(max(to_int(p.get('QuantityAvailable')) or 0, 0) for p in products)
+    reserved = sum(to_int(p.get('QuantityReserved')) or 0 for p in products)
+    best = max(products, key=lambda p: to_int(p.get('QuantityAvailable')) or 0)
+    places = []
+    for p in products:
+        where = (p.get('Location') or {}).get('Path') or 'not put away'
+        section = (p.get('Location') or {}).get('Section')
+        places.append(f'{where}{" (" + section + ")" if section else ""}: {to_int(p.get("QuantityAvailable")) or 0}')
+    note = ['at ' + '; '.join(places)]
+    if reserved:
+        note.append(f'{reserved} more reserved for projects')
+    # Feeder holds stock whatever the part's lifecycle; lifecycle comes from the distributor rows.
+    return result(mpn, needed, 'Feeder',
+                  distributor_pn=', '.join(f'part {p.get("PartId")}' for p in products),
+                  manufacturer=best.get('Manufacturer'), stock=available, lifecycle='on hand',
+                  verdict=verdict(True, True, available, needed), unit_price_usd=best.get('UnitPrice'),
+                  price_break_qty='', moq='', datasheet=best.get('DatasheetUrl'),
+                  product_url=best.get('ProductUrl'), note='; '.join(note))
+
+
 # ---------------------------------------------------------------- main
 
 def check(lines, distributors, boards, stamp):
@@ -376,6 +434,14 @@ def main(argv=None):
     for w in warnings:
         print('WARNING:', w, file=sys.stderr)
     distributors = []
+    if creds.get('FEEDER_URL') and creds.get('FEEDER_API_KEY'):
+        try:
+            distributors.append(Feeder(creds['FEEDER_URL'], creds['FEEDER_API_KEY']))
+        except ValueError as e:
+            print(f'ERROR: {e}', file=sys.stderr)
+            return 2
+    else:
+        print('Feeder: skipped (FEEDER_URL / FEEDER_API_KEY not set)', file=sys.stderr)
     if creds.get('DIGIKEY_CLIENT_ID') and creds.get('DIGIKEY_CLIENT_SECRET'):
         distributors.append(DigiKey(creds['DIGIKEY_CLIENT_ID'], creds['DIGIKEY_CLIENT_SECRET']))
     else:
@@ -385,7 +451,7 @@ def main(argv=None):
     else:
         print('Mouser: skipped (MOUSER_API_KEY not set)', file=sys.stderr)
     if not distributors:
-        print(f'ERROR: no distributor credentials in the environment or {config_dir}. '
+        print(f'ERROR: no Feeder or distributor credentials in the environment or {config_dir}. '
               'Check stock manually on the distributor sites.', file=sys.stderr)
         return 2
 
@@ -403,14 +469,16 @@ def main(argv=None):
 
     print(f'Checked {len(lines)} part(s) x {args.boards} board(s) at {stamp}')
     for row in rows:
-        price = f' ${row["unit_price_usd"]}@{row["price_break_qty"]}' if row['unit_price_usd'] != '' else ''
+        price = ''
+        if row['unit_price_usd'] != '':
+            price = f' ${row["unit_price_usd"]}' + (f'@{row["price_break_qty"]}' if row['price_break_qty'] != '' else '')
         print(f'  {row["verdict"]:12} {row["mpn"]:24} {row["distributor"]:9} stock={row["stock"]!s:>7} '
               f'need={row["needed_qty"]} {row["lifecycle"]}{price}{"  (" + row["note"] + ")" if row["note"] else ""}')
     print('Report:', report)
     if failures:
-        print(f'FAIL: no distributor has these Active and in stock: {", ".join(failures)}')
+        print(f'FAIL: neither Feeder has these available nor a distributor Active and in stock: {", ".join(failures)}')
         return 1
-    print('PASS: every part is Active and in stock at one or more distributors')
+    print('PASS: every part is available in Feeder or Active and in stock at one or more distributors')
     return 0
 
 
