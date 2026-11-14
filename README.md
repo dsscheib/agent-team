@@ -1,6 +1,6 @@
 # Project Agent Team Bootstrap
 
-A **stack-neutral, opt-in** installer for project-local subagents in **Codex CLI, Claude Code, GitHub Copilot CLI, and Google Antigravity**. No third-party Python dependencies. Tested with Python 3.11+.
+A **stack-neutral, opt-in** installer for project-local subagents in **Codex CLI, Claude Code, GitHub Copilot CLI, and Google Antigravity**. Besides software roles it has electronics roles for **KiCad 10** and mechanical/FDM roles for **FreeCAD 1.1**, each with optional helper scripts. No third-party Python dependencies. Tested with Python 3.11+.
 
 ## Quick start
 
@@ -19,7 +19,18 @@ python3 bootstrap.py --project ~/Projects/my-project --platforms codex --preset 
 - `core`: backend, frontend, integration-tester, auditor-advisor
 - `web`: backend, frontend, frontend-tester, integration-tester, ux-designer
 - `service`: backend, database, integration-tester, security, devops
-- `full`: all 11 roles
+- `full`: all 11 software roles
+- `kicad-core`: circuit-designer, pcb-layout, component-engineer, electrical-verifier, hardware-auditor
+- `kicad-full`: all 10 KiCad roles (adds pcb-manufacturing, firmware, hardware-bringup, power-electronics, signal-integrity)
+- `freecad-core`: cad-engineer, mechanical-engineer, printability-engineer, cad-verifier, mechanical-auditor
+- `freecad-full`: all 8 FreeCAD roles (adds assembly-engineer, electronics-enclosure, slicer-specialist)
+
+`--preset` takes several presets, for example a board and its enclosure:
+
+```bash
+python3 bootstrap.py --project ~/Projects/my-board --platforms codex claude copilot antigravity \
+  --preset kicad-core freecad-core --roles electronics-enclosure --with-tools --with-agents-md --apply
+```
 
 You can also pick roles without a preset:
 
@@ -35,7 +46,24 @@ python3 bootstrap.py --project ~/Projects/parts --platforms codex \
   --preset core --roles database devops --apply
 ```
 
-To generate initial project instructions only if missing, use `--with-agents-md` and edit the resulting `AGENTS.md`. Existing project instructions are never overwritten.
+To generate initial project instructions only if missing, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. Existing project instructions are never overwritten.
+
+## KiCad and FreeCAD kits
+
+`--with-tools` also installs the helper files of each hardware domain you selected. The agent instructions refer to these paths, so install them unless the project already has its own.
+
+| Domain | Installed files |
+|---|---|
+| KiCad | `tools/kicad/doctor.py` (environment check), `tools/kicad/verify.py` (ERC on each root schematic named by a `.kicad_pro`, DRC with schematic parity; reports in `reports/kicad/`), `tools/kicad/fabrication_export.py` (Gerbers and drills to `reports/fab-staging/`, never orders), `docs/electronics/design-requirements.md`, `docs/electronics/release-checklist.md` |
+| FreeCAD | `tools/freecad/doctor.py` (finds FreeCAD/OrcaSlicer on PATH or as Flatpaks), `tools/freecad/inspect_model.py` (run with `FreeCADCmd`; shape validity, solids, volume, envelope to `reports/`), `tools/freecad/check_build_volume.py` (`--volume X Y Z`, default Ender-3 S1 Pro 220 x 220 x 270 mm), `scripts/create_parametric_plate.py` (example sketch + pad with STEP/STL export), `docs/mechanical/design-requirements.md`, `docs/mechanical/slicing.md` |
+
+Kit files follow the same rules as agent files: created only when absent, identical files left alone, conflicts stop the install unless `--skip-existing`.
+
+- KiCad schematics have no IPC editing API, so agents edit `.kicad_sch` files natively and validate with `kicad-cli`. Live PCB edits use the KiCad 10 IPC API with a running PCB Editor (enable the API server in Preferences > Plugins). ERC/DRC passing is not proof of electrical correctness or fab readiness.
+- With the FreeCAD Flatpak, run scripts as `flatpak run --command=FreeCADCmd org.freecad.FreeCAD SCRIPT.py ARGS`, from inside the project: the sandbox has its own `/tmp`.
+- No kit sends G-code, controls a printer, flashes firmware or places fabrication orders.
+
+Tested 2026-11-13 with KiCad 10.0.8 (the `complex_hierarchy` demo) and the FreeCAD 1.1.4 Flatpak (example plate, inspection and build-volume check).
 
 ## Installation semantics
 
@@ -53,9 +81,9 @@ Each role in `catalog/roles.json` has a `kind` that sets its tool access on ever
 
 | Kind | Edits files | Runs commands | Roles |
 |---|---|---|---|
-| `implementer`, `tester` | Yes | Yes | backend, frontend, database, devops, documentation, integration-tester |
-| `inspector` | No | Yes (tests, browsers, profilers) | frontend-tester, performance |
-| `reviewer` | No | No | security, ux-designer, auditor-advisor |
+| `implementer`, `tester` | Yes | Yes | backend, frontend, database, devops, documentation, integration-tester; circuit-designer, pcb-layout, component-engineer, firmware, hardware-bringup; cad-engineer, mechanical-engineer, assembly-engineer, electronics-enclosure, slicer-specialist |
+| `inspector` | No | Yes (tests, browsers, profilers, ERC/DRC, FreeCADCmd, simulations) | frontend-tester, performance; electrical-verifier, pcb-manufacturing, power-electronics, signal-integrity; printability-engineer, cad-verifier |
+| `reviewer` | No | No | security, ux-designer, auditor-advisor; hardware-auditor, mechanical-auditor |
 
 Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not override the parent session. Reviewers get `[features] shell_tool = false`, so they cannot run commands. Codex has no documented way to stop an agent editing files, so on Codex the no-edit limit for inspectors and reviewers rests on their instructions.
 
@@ -70,9 +98,9 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 ## Models and constraints
 
-- Codex defaults: Sol for most engineering, Terra for UI/docs, Astra for security and auditor/advisor; reasoning medium/high/xhigh as appropriate.
-- Claude defaults: Sonnet for implementation, Opus for security/audit. These use documented family aliases, **not** pinned versions; modify per project if desired.
-- Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for security/audit. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
+- Codex defaults: Sol for most engineering, Terra for UI/docs and component/slicer work, Astra for security, auditors, power electronics and signal integrity; reasoning medium/high/xhigh as appropriate.
+- Claude defaults: Sonnet for implementation, Opus for security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
+- Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for the roles that use Astra on Codex. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
 - Antigravity defaults: `model: inherit`. The subagent docs also accept `flash` and `pro`; set `antigravity_model` per role to pin a tier. `inherit` does not guarantee a distinct cheaper model. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
 
@@ -92,7 +120,7 @@ The Codex model names in `catalog/roles.json` (`gpt-6.1-sol`, `gpt-6.1-terra`, `
 
 ## Customization
 
-Edit `catalog/roles.json` to change descriptions or recommended model defaults, and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. `catalog/practices.md` provides shared principles. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
+Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`) or recommended model defaults, and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer and tool facts live in the kit's `AGENTS.md` section, not in the agents, so edit that section for a different printer. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
 
 Documentation references (agent file fields and tool names for Codex, Copilot CLI and Antigravity checked 2026-11-13):
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
