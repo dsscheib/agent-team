@@ -98,10 +98,10 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 ## Models and constraints
 
-- Codex defaults: Sol for most engineering, Terra for UI/docs and component/slicer work, Astra for security, auditors, power electronics and signal integrity; reasoning medium/high/xhigh as appropriate.
-- Claude defaults: Sonnet for implementation, Opus for security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
+- Codex defaults: Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), Terra for UI/docs and slicer work, Astra for security, auditors, power electronics and signal integrity; reasoning medium/high/xhigh as appropriate.
+- Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
 - Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for the roles that use Astra on Codex. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
-- Antigravity defaults: `model: inherit`. The subagent docs also accept `flash` and `pro`; set `antigravity_model` per role to pin a tier. `inherit` does not guarantee a distinct cheaper model. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
+- Antigravity defaults: `model: inherit` for most roles, and `pro` for the roles that use Astra on Codex and Opus on Claude (security, auditors, power electronics, signal integrity), so independent review uses the top tier on every platform. The subagent docs also accept `flash`; set `antigravity_model` per role to change a tier. `inherit` does not guarantee a distinct cheaper model. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
 
 ## Verification
