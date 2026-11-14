@@ -177,6 +177,24 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual([(c, s.name) for _, c, s in verify.checks(p)],
                              [('erc', 'board.kicad_sch'), ('drc', 'board.kicad_pcb')])
 
+    def test_kicad_doctor_prefers_kicad_python_env_then_default_venv(self):
+        doctor = load(ROOT/'domains/kicad/files/tools/kicad/doctor.py')
+        with tempfile.TemporaryDirectory() as td:
+            custom = Path(td)/'python'
+            custom.write_text('')
+            saved = os.environ.get('KICAD_PYTHON')
+            try:
+                os.environ['KICAD_PYTHON'] = str(custom)
+                found = doctor.kipy_interpreters()
+            finally:
+                if saved is None:
+                    os.environ.pop('KICAD_PYTHON')
+                else:
+                    os.environ['KICAD_PYTHON'] = saved
+            self.assertEqual(found[0], str(custom))
+            self.assertEqual(found[-1], doctor.sys.executable)
+            self.assertTrue(str(doctor.DEFAULT_VENV_PYTHON).endswith('.local/share/kicad-python/bin/python'))
+
     def test_build_volume_check(self):
         check = load(ROOT/'domains/freecad/files/tools/freecad/check_build_volume.py')
         with tempfile.TemporaryDirectory() as td:

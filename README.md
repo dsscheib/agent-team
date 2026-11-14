@@ -59,7 +59,7 @@ To generate initial project instructions only if missing, use `--with-agents-md`
 
 Kit files follow the same rules as agent files: created only when absent, identical files left alone, conflicts stop the install unless `--skip-existing`.
 
-- KiCad schematics have no IPC editing API, so agents edit `.kicad_sch` files natively and validate with `kicad-cli`. Live PCB edits use the KiCad 10 IPC API with a running PCB Editor (enable the API server in Preferences > Plugins). ERC/DRC passing is not proof of electrical correctness or fab readiness.
+- KiCad schematics have no IPC editing API, so agents edit `.kicad_sch` files natively and validate with `kicad-cli`. Live PCB edits use the KiCad 10 IPC API with a running PCB Editor (enable the API server in Preferences > Plugins) through `kicad-python` (`import kipy`). Agents expect it in a venv at `~/.local/share/kicad-python`, or at the interpreter named by `$KICAD_PYTHON`; `tools/kicad/doctor.py` reports which one it found and whether the editor answers. ERC/DRC passing is not proof of electrical correctness or fab readiness.
 - With the FreeCAD Flatpak, run scripts as `flatpak run --command=FreeCADCmd org.freecad.FreeCAD SCRIPT.py ARGS`, from inside the project: the sandbox has its own `/tmp`.
 - No kit sends G-code, controls a printer, flashes firmware or places fabrication orders.
 
