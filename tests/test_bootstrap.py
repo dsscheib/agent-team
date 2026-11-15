@@ -375,6 +375,90 @@ class BootstrapTests(unittest.TestCase):
         _, failures = avail.check([('A', 1)], [Fake('Feeder', 'OK'), Fake('Digi-Key', 'NOT_ACTIVE')], 1, 't')
         self.assertEqual(failures, [])
 
+    def test_availability_search_parses_both_distributors(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        prod = {'ManufacturerProductNumber': 'LDD-700L', 'Manufacturer': {'Name': 'MEAN WELL USA Inc.'},
+                'QuantityAvailable': 133, 'ProductStatus': {'Status': 'Active'}, 'DatasheetUrl': 'ds', 'ProductUrl': 'url',
+                'Description': {'ProductDescription': 'LED DRIVER CC DC/DC', 'DetailedDescription': 'LED Driver IC 700mA'},
+                'Category': {'Name': 'Power Supplies', 'ChildCategories': [{'Name': 'LED Drivers', 'ChildCategories': []}]},
+                'Parameters': [{'ParameterText': 'Current - Output', 'ValueText': '700mA'},
+                               {'ParameterText': 'Dimming', 'ValueText': 'PWM'}],
+                'ProductVariations': [{'DigiKeyProductNumber': '1866-LDD-700L-ND', 'MinimumOrderQuantity': 1,
+                                       'QuantityAvailableforPackageType': 133,
+                                       'StandardPricing': [{'BreakQuantity': 1, 'UnitPrice': 9.5}]}]}
+        rows = avail.parse_digikey_search({'ExactMatches': [prod], 'Products': [prod]})
+        self.assertEqual(len(rows), 1)  # ExactMatches repeats Products
+        row = rows[0]
+        self.assertEqual((row['distributor'], row['mpn'], row['category'], row['stock'], row['active'],
+                          row['distributor_pn'], row['unit_price_usd'], row['description']),
+                         ('Digi-Key', 'LDD-700L', 'LED Drivers', 133, True, '1866-LDD-700L-ND', 9.5, 'LED Driver IC 700mA'))
+        self.assertEqual(row['parameters'], 'Current - Output: 700mA; Dimming: PWM')
+        self.assertEqual(set(row), set(avail.SEARCH_FIELDS))
+
+        part = {'ManufacturerPartNumber': 'IRM-03-3.3', 'Manufacturer': 'MEAN WELL', 'MouserPartNumber': '709-IRM03-3.3',
+                'Description': 'Switching Power Supplies 3W 3.3V', 'Category': 'Switching Power Supplies',
+                'AvailabilityInStock': '1396', 'LifecycleStatus': None, 'Min': '1',
+                'PriceBreaks': [{'Quantity': 1, 'Price': '$7.20'}],
+                'ProductAttributes': [{'AttributeName': 'Output Voltage', 'AttributeValue': '3.3 V'}]}
+        row = avail.parse_mouser_search({'Errors': [], 'SearchResults': {'Parts': [part]}})[0]
+        self.assertEqual((row['distributor'], row['stock'], row['lifecycle'], row['active'], row['unit_price_usd'],
+                          row['parameters']),
+                         ('Mouser', 1396, 'Active', True, 7.2, 'Output Voltage: 3.3 V'))
+        self.assertEqual(avail.parse_mouser_search({'SearchResults': {'Parts': []}}), [])
+        with self.assertRaises(LookupError):
+            avail.parse_mouser_search({'Errors': [{'Message': 'Invalid key'}]})
+
+    def test_availability_search_filters_sorts_and_reports_errors(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+
+        def row(mpn, stock, active, parameters=''):
+            return avail.search_result('X', mpn, {'stock': stock, 'active': active, 'lifecycle': 'Active'},
+                                       description='LED driver', category='LED Drivers', parameters=parameters)
+
+        class Fake:
+            def __init__(self, name, rows=None, error=None):
+                self.name, self.rows, self.error, self.calls = name, rows or [], error, []
+            def search(self, keywords, limit, in_stock):
+                self.calls.append((keywords, limit, in_stock))
+                if self.error:
+                    raise LookupError(self.error)
+                return [dict(r) for r in self.rows]
+
+        dk = Fake('Digi-Key', [row('A', 5, True, 'Dimming: 0-10V'), row('B', 0, True, 'Dimming: PWM'),
+                               row('C', 900, False, 'Dimming: 0-10V')])
+        mouser = Fake('Mouser', error='HTTP 403 Forbidden')
+        rows, errors = avail.run_search('led driver', [dk, mouser], 10, 't')
+        self.assertEqual(([r['mpn'] for r in rows], errors), (['C', 'A', 'B'], ['Mouser: HTTP 403 Forbidden']))
+        self.assertEqual(rows[0]['searched_at_utc'], 't')
+        self.assertEqual(dk.calls, [('led driver', 10, False)])
+        rows, _ = avail.run_search('led driver', [dk], 10, 't', in_stock=True, active=True)
+        self.assertEqual([r['mpn'] for r in rows], ['A'])
+        rows, _ = avail.run_search('led driver', [dk], 10, 't', require=['0-10v', 'led'])
+        self.assertEqual([r['mpn'] for r in rows], ['C', 'A'])
+        rows, _ = avail.run_search('led driver', [dk], 10, 't', require=['dali'])
+        self.assertEqual(rows, [])
+
+    def test_availability_search_command_line_rules(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        with tempfile.TemporaryDirectory() as td, contextlib.redirect_stderr(io.StringIO()):
+            for argv in (['X', '--search', 'led driver'], ['--search', '  '], ['--search', 'x', '--limit', '0'],
+                         ['--search', 'x', '--limit', '51'], ['X', '--in-stock'], ['X', '--require', 'pwm'], []):
+                with self.assertRaises(SystemExit) as cm:
+                    avail.main(argv + ['--config-dir', td, '--output', td])
+                self.assertEqual(cm.exception.code, 2, argv)
+        saved = {k: os.environ.pop(k) for k in avail.SECRET_KEYS if k in os.environ}
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td)/'feeder.env').write_text('FEEDER_URL=https://feeder.example\nFEEDER_API_KEY=feeder_fake\n')
+                (Path(td)/'feeder.env').chmod(0o600)
+                # Feeder alone cannot search, so a search with only Feeder configured is a configuration error.
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(avail.main(['--search', 'led driver', '--config-dir', td, '--output', td]), 2)
+                self.assertIn('not used for --search', err.getvalue())
+                self.assertNotIn('feeder_fake', err.getvalue())
+        finally:
+            os.environ.update(saved)
+
     def test_domain_scripts_compile(self):
         for script in (ROOT/'domains').rglob('*.py'):
             compile(script.read_text(), str(script), 'exec')
