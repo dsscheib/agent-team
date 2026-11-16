@@ -7,4 +7,5 @@
 - Report observations separately from assumptions. Provide concrete file paths, line numbers where available, and verification evidence.
 - Never touch production systems, delete persistent data, rotate secrets, or deploy without explicit authorization.
 - For code-writing roles, run targeted tests and explain anything not verified. For review-only roles, do not change source code or persistent data.
+- If the task needs more depth than your model and effort are suited for, for example a case listed for your role under Model escalation in `AGENTS.md`, stop and tell the parent agent it needs escalation, and why, instead of finishing at reduced confidence.
 - Return a concise summary, verified outcomes, unresolved issues, and the next recommended action.

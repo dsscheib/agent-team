@@ -46,7 +46,7 @@ python3 bootstrap.py --project ~/Projects/parts --platforms codex \
   --preset core --roles database devops --apply
 ```
 
-To generate initial project instructions, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. If `AGENTS.md` already exists (for example from another guidance package), only the domain sections it lacks are appended, matched by their heading; nothing else in it is changed, and reruns add nothing.
+To generate initial project instructions, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. If `AGENTS.md` already exists (for example from another guidance package), only the domain sections it lacks are appended, matched by their heading; nothing else in it is changed, and reruns add nothing. It also gets a model escalation section for each domain selected (see [Model escalation](#model-escalation)). With `--platforms claude`, a `CLAUDE.md` containing `@AGENTS.md` is created, or that line appended to an existing one, because Claude Code reads `CLAUDE.md` rather than `AGENTS.md`.
 
 ## KiCad and FreeCAD kits
 
@@ -54,7 +54,7 @@ To generate initial project instructions, use `--with-agents-md` and edit the re
 
 | Domain | Installed files |
 |---|---|
-| KiCad | `tools/kicad/doctor.py` (environment check), `tools/kicad/verify.py` (ERC on each root schematic named by a `.kicad_pro`, DRC with schematic parity; reports in `reports/kicad/`), `tools/kicad/fabrication_export.py` (Gerbers and drills to `reports/fab-staging/`, never orders), `tools/kicad/check_availability.py` (stock and lifecycle by MPN or BOM CSV through the Digi-Key and Mouser APIs, or with `--search KEYWORDS` a keyword search for candidate parts at both, filtered by `--in-stock`, `--active` and `--require TEXT`, report `search-*.csv`; and stock on hand in a Feeder inventory through its read-only parts API (`FEEDER_URL`, `FEEDER_API_KEY`), report in `reports/kicad/`; credentials from the environment or `*.env` files in `$DISTRIBUTOR_API_DIR`, default `~/.config/distributor-api`), `docs/electronics/design-requirements.md`, `docs/electronics/release-checklist.md` |
+| KiCad | `tools/kicad/doctor.py` (environment check), `tools/kicad/verify.py` (ERC on each root schematic named by a `.kicad_pro`, DRC with schematic parity; reports in `reports/kicad/`), `tools/kicad/fabrication_export.py` (Gerbers and drills to `reports/fab-staging/`, never orders), `tools/kicad/layout_metrics.py` (reads a saved `.kicad_pcb` without KiCad running: outline and courtyard extent, track length and vias, and for named nets length, layers, reference-plane coverage, pair skew, decoupling distances and loop areas; report in `reports/kicad/`), `tools/kicad/check_availability.py` (stock and lifecycle by MPN or BOM CSV through the Digi-Key and Mouser APIs, or with `--search KEYWORDS` a keyword search for candidate parts at both, filtered by `--in-stock`, `--active` and `--require TEXT`, report `search-*.csv`; and stock on hand in a Feeder inventory through its read-only parts API (`FEEDER_URL`, `FEEDER_API_KEY`), report in `reports/kicad/`; credentials from the environment or `*.env` files in `$DISTRIBUTOR_API_DIR`, default `~/.config/distributor-api`), `docs/electronics/design-requirements.md`, `docs/electronics/release-checklist.md` |
 | FreeCAD | `tools/freecad/doctor.py` (finds FreeCAD/OrcaSlicer on PATH or as Flatpaks), `tools/freecad/inspect_model.py` (run with `FreeCADCmd`; shape validity, solids, volume, envelope to `reports/`), `tools/freecad/check_build_volume.py` (`--volume X Y Z`, default Ender-3 S1 Pro 220 x 220 x 270 mm), `scripts/create_parametric_plate.py` (example sketch + pad with STEP/STL export), `docs/mechanical/design-requirements.md`, `docs/mechanical/slicing.md` |
 
 Kit files follow the same rules as agent files: created only when absent, identical files left alone, conflicts stop the install unless `--skip-existing`. The tools write generated reports under `reports/`, so `--with-tools` also adds `reports/`, plus KiCad's per-user and cache files (`*.kicad_prl`, `*.lck`, `fp-info-cache`, `*-backups/`), to `.gitignore` (creating it, or appending if the entry is missing) to keep check runs from dirtying the tree.
@@ -70,7 +70,7 @@ Tested 2026-11-13 with KiCad 10.0.8 (the `complex_hierarchy` demo) and the FreeC
 - Project-local files only; **never writes to your home directory**.
 - Agent files are created only when absent. Identical existing files are left alone.
 - A conflicting existing agent file stops the whole install; `--skip-existing` leaves that file untouched.
-- Every file the installer writes is a new agent file. It never edits `.codex/config.toml` or any other existing file, so there is nothing to back up.
+- Apart from appending missing sections to `AGENTS.md`, `CLAUDE.md` and `.gitignore`, the installer only creates new files. It never edits `.codex/config.toml` or any other existing file, so there is nothing to back up.
 - The installer never changes approval settings, sandbox defaults, or primary orchestrator model.
 - Agent definitions include recommended models, but **model availability and exact configuration support must be verified in your installed clients**.
 - Read-only specialist tool restrictions are best-effort and do not secure credentials or environments accessible through other tools.
@@ -99,7 +99,7 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 ## Models and constraints
 
 - Codex defaults: Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), Terra for UI/docs and slicer work, Astra for security, auditors, power electronics and signal integrity; reasoning medium/high/xhigh as appropriate.
-- Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
+- Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), component engineering and electrical verification (where a pin, footprint or rating error forces a board respin), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
 - Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for the roles that use Astra on Codex. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
 - Antigravity defaults: `model: inherit` for every role. Subagent files accept only the tiers `inherit`, `flash_lite`, `flash` and `pro`, not model IDs, and in agy 1.5.8 both `pro` and `flash` ran on `gemini-3.8-flash-tiered` while `inherit` ran on the parent's model (tested 2026-11-13 against a `gemini-4-carbon-high` parent). Every role therefore runs on the session's model: start reviews and audits on the strongest Gemini 4 model you have, for example `agy --model gemini-4-carbon-high`, or pick it with `/model`. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
@@ -133,7 +133,7 @@ Installing a `full` preset alone does not require Astra: choose based on the act
 
 The catalog sets integration testing and PCB manufacturing to High because their full responsibilities include failure-mode design and fabrication readiness. CAD verification defaults to Medium for its established inspection scripts. Other defaults retain the existing model split. The three auditors retain Astra Extra High for deep, comprehensive audits; use High for routine reviews or consultations.
 
-Choose these overrides before delegation by configuring the relevant agent file or using model/effort overrides supported by your client. They are guidance, not automatic routing: generated agent files have one fixed model and effort. If a specialist encounters a task needing escalation, the primary should reassess and reassign it with the appropriate settings.
+Generated agent files have one fixed model and effort. The upward overrides below are also written to `AGENTS.md` as [escalation rules](#model-escalation) for the primary to apply when delegating; the downward ones (cheaper settings for routine work) stay manual, by editing the agent file or overriding the model when delegating.
 
 | Specialist | Task-specific override |
 |---|---|
@@ -158,6 +158,60 @@ Keep component engineering and electrical verification on Sol High: their respon
 
 Higher effort takes more time and tokens; validate these choices on representative tasks and adjust based on observed results. See the [official model and reasoning-effort guidance](https://learn.chatgpt.com/docs/models). Model availability is client/account dependent: the local CLI 0.162.1 model listing checked on 2026-11-16 omitted Terra, although the official guide supports explicit Terra selection on CLI 0.159.0+. Confirm it works in your target session before relying on Terra roles.
 
+### Claude Code primary agent
+
+As with Codex, these are task-based starting points, and the installer leaves the primary model and effort unchanged. Select them when starting a session, for example `claude --model opus --effort high`, or with `/model` inside a session. `--effort` accepts `low`, `medium`, `high`, `xhigh` and `max`.
+
+In the tables below, Opus, Sonnet and Fable are the Claude Code aliases `opus`, `sonnet` and `fable`, which resolve to the latest model in each family (Claude Opus 5.5, Sonnet 5.5 and Fable 5.2 as of 2026-11-16). Fable is the most capable and costs more than Opus. Its gains above High are uneven, so move it to Extra High only where you see a measured improvement.
+
+| Project / preset | Recommended primary | Adjust for the task |
+|---|---|---|
+| General software / `core` | Opus High | Medium for small, well-defined changes; Fable High for difficult architecture or elusive failures. |
+| Web application / `web` | Opus High | Sonnet Medium for sessions dominated by styling, visual iteration and content. |
+| Backend, API, database / `service` | Opus High | Fable High for distributed consistency, major migrations or complex security architecture. |
+| Broad software / `full` | Opus High | Fable High for major redesigns across subsystems. |
+| Ordinary PCB / `kicad-core` | Opus High | Fable High when novel circuit design and unresolved engineering decisions dominate. |
+| Complex electronics / `kicad-full` | Fable High | Opus High for implementation after architecture and constraints are settled. |
+| Ordinary CAD and FDM / `freecad-core` | Opus High | Medium for simple dimensional edits and familiar parametric parts. |
+| Complex assemblies / `freecad-full` | Fable High | Opus High for straightforward modeling and enclosure implementation. |
+| Combined PCB, firmware and enclosure | Fable High | Extra High (`xhigh`) for major cross-domain design reviews or especially difficult tradeoffs. |
+
+Installing a `full` preset alone does not require Fable: choose based on the actual work. Reserve Max for exceptional reasoning problems.
+
+### Claude Code specialist overrides
+
+Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in `catalog/roles.json`) but no `effort`. To fix a specialist's effort permanently, add an `effort:` line (`low` to `max`) to the frontmatter of its `.claude/agents/<role>.md` file. Every override below is an escalation, written to `AGENTS.md` as an [escalation rule](#model-escalation).
+
+| Specialist | Default | Task-specific override |
+|---|---|---|
+| `frontend` | Sonnet | Opus High for complex state management, asynchronous behavior and application logic; retain Sonnet for visual/component work. |
+| `devops` | Sonnet | Medium effort for small, familiar CI edits. |
+| `integration-tester` | Sonnet | Opus High for test design involving concurrency, recovery, authorization or migrations; retain Sonnet for running established suites. |
+| `security` | Opus | Fable High for complex security architecture or threat models spanning several services. |
+| `auditor-advisor`, `hardware-auditor`, `mechanical-auditor` | Opus | Opus Extra High for comprehensive audits; the default for incremental reviews and routine consultations. |
+| `circuit-designer` | Opus | Fable High for novel analog, mixed-signal or protection design. |
+| `pcb-layout` | Sonnet | Opus High for difficult electrical/layout tradeoffs. |
+| `pcb-manufacturing` | Sonnet | Opus High for final fabrication/assembly readiness; retain Sonnet for export staging and established checklists. |
+| `hardware-bringup` | Sonnet | Opus High for ambiguous fault diagnosis spanning several subsystems. |
+| `power-electronics` | Opus | Opus Extra High for difficult stability, transient and interacting protection problems. |
+| `signal-integrity` | Opus | Opus Extra High for difficult return-path, stackup and coupling tradeoffs. |
+| `mechanical-engineer` | Sonnet | Opus High for coupled load, material, thermal and tolerance analysis. |
+| `electronics-enclosure` | Sonnet | Opus High when thermal, electrical and mechanical requirements conflict. |
+| `printability-engineer` | Sonnet | Opus High for load-bearing parts, anisotropy and tight fits. |
+| `cad-verifier` | Sonnet | Opus High for unexplained geometry or export failures. |
+
+Component engineering and electrical verification run on Opus by default, like their Codex counterparts on Sol High. Backend, database, performance, firmware, CAD, assembly and slicer work, frontend testing, UX review and documentation retain Sonnet. Validate these choices on representative tasks and adjust based on observed results. See the [Claude Code subagent documentation](https://code.claude.com/docs/en/sub-agents) for supported frontmatter fields.
+
+### Model escalation
+
+The specialist tables above only help if the primary agent knows them, so escalation is installed in three layers:
+
+1. **Defaults.** Roles where a miss is expensive start on a strong model, so they need no escalation.
+2. **Rules for the primary.** `--with-agents-md` writes a `## Model escalation: <domain> roles` section to `AGENTS.md` for each domain selected, generated from the `escalation` entries in `catalog/roles.json`. Each row names a role, the kind of task that warrants escalation and the Codex and Claude Code setting to use. The primary applies it when delegating: Claude Code's subagent call takes `model` and `effort` that override the agent file (and sets effort only when instructions ask, which this section does); Codex CLI 0.169.0's `spawn_agent` takes model and reasoning effort overrides. Copilot CLI and Antigravity roles mostly run on the session's model, so there the rule means starting a stronger session. Each section lists every escalation rule of its domain, so it stays correct when you install more roles later.
+3. **Specialists ask.** Every role's shared practices tell it to stop and report that a task needs escalation, and why, rather than finish at reduced confidence. The escalation section tells the primary to delegate such a task again at the listed setting.
+
+The primary still decides whether a task matches a rule, so review delegations on important work.
+
 ## Verification
 
 1. Preview the installation; compare any existing files and role names.
@@ -174,7 +228,7 @@ The Codex model names in `catalog/roles.json` (`gpt-6.1-sol`, `gpt-6.1-terra`, `
 
 ## Customization
 
-Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`) or recommended model defaults, and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer and tool facts live in the kit's `AGENTS.md` section, not in the agents, so edit that section for a different printer. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
+Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules (`when`, plus `codex_model`/`codex_effort` and `claude_model`/`claude_effort`, either pair empty for no change), and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer and tool facts live in the kit's `AGENTS.md` section, not in the agents, so edit that section for a different printer. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
 
 Documentation references (agent file fields and tool names for Codex, Copilot CLI and Antigravity checked 2026-11-13):
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
