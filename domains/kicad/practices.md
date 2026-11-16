@@ -6,4 +6,5 @@
 - Use datasheets and measured facts, never invented values. Cite the datasheet or source for each value that matters.
 - `tools/kicad/verify.py` runs ERC on each root schematic and DRC with schematic parity on each board, writing reports to `reports/kicad/`. A clean ERC/DRC is necessary, not proof of electrical correctness, safety or fab readiness.
 - No fabrication release, ordering, purchasing, flashing, energized testing or destructive operation without explicit human approval. Stage manufacturing outputs only in `reports/fab-staging/`.
+- If the task needs more depth than your model and effort are suited for, for example a case listed for your role under Model escalation in `AGENTS.md`, stop and tell the parent agent it needs escalation, and why, instead of finishing at reduced confidence.
 - Report files changed, checks actually run with their results, unverified assumptions, and the handoff to the lead.

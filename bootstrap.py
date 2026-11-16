@@ -88,6 +88,13 @@ def caps(role):
         raise ValueError(f'Role {role!r} has unknown kind {kind!r}; expected one of {", ".join(KINDS)}')
     if ROLES[role]['domain'] not in DOMAIN_DIRS:
         raise ValueError(f'Role {role!r} has unknown domain {ROLES[role]["domain"]!r}')
+    rule = ROLES[role].get('escalation')
+    if rule is not None:
+        if not rule.get('when') or not (rule.get('codex_model') or rule.get('claude_model')):
+            raise ValueError(f'Role {role!r} escalation needs "when" and a Codex or Claude model')
+        for platform in ('codex', 'claude'):
+            if rule.get(f'{platform}_model') and rule.get(f'{platform}_effort') not in EFFORTS:
+                raise ValueError(f'Role {role!r} escalation {platform}_effort must be one of {", ".join(EFFORTS)}')
     return KINDS[kind]
 
 
@@ -180,11 +187,49 @@ def kits(roles):
     return [d for d, path in DOMAIN_DIRS.items() if path is not None and d in used]
 
 
+DOMAIN_NAMES = {'software': 'Software', 'kicad': 'KiCad', 'freecad': 'FreeCAD'}
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+
+ESCALATION_INTRO = '''Each specialist's agent file sets a default model and effort. When a delegated task matches a row below, delegate it at the listed setting instead:
+- Claude Code: set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.
+- Codex: pass the listed values as the model and reasoning effort overrides when spawning the agent.
+- Copilot CLI and Antigravity, where most roles run on the session's model: use a stronger session model for these tasks.
+- "Default" means the role's default is already suited; a role not installed in this project does not apply.
+
+If a specialist reports that its task needs escalation, delegate it again at the listed setting rather than accepting a reduced-confidence result.'''
+
+
+def used_domains(roles):
+    used = {ROLES[r]['domain'] for r in roles}
+    return [d for d in DOMAIN_DIRS if d in used]
+
+
+def escalation_section(domain):
+    """Model escalation rules for every role of a domain, so the section is the same whichever roles are installed."""
+    def setting(rule, platform):
+        model = rule[f'{platform}_model']
+        return f'`{model}`, {rule[f"{platform}_effort"]}' if model else 'Default'
+    rows = [f'| `{role}` | {rule["when"]} | {setting(rule, "codex")} | {setting(rule, "claude")} |'
+            for role in domain_roles(domain) if (rule := ROLES[role].get('escalation'))]
+    if not rows:
+        return ''
+    return '\n'.join([f'## Model escalation: {DOMAIN_NAMES[domain]} roles', '', ESCALATION_INTRO, '',
+                      '| Role | Escalate when | Codex | Claude Code |', '|---|---|---|---|'] + rows)
+
+
+def context_sections(roles):
+    """Sections of AGENTS.md beyond the starter: domain kits, then model escalation rules."""
+    kit_sections = [_read(DOMAIN_DIRS[d] / 'AGENTS.md').strip() for d in kits(roles)]
+    return kit_sections + [s for s in map(escalation_section, used_domains(roles)) if s]
+
+
 def agents_md(roles):
-    sections = [_read(DOMAIN_DIRS[d] / 'AGENTS.md').strip() for d in kits(roles)]
-    if any(ROLES[r]['domain'] == 'software' for r in roles) or not sections:
-        return '\n\n'.join([STARTER_AGENTS_MD.strip()] + sections) + '\n'
-    return '# Project instructions\n\n' + '\n\n'.join(sections) + '\n'
+    head = STARTER_AGENTS_MD.strip() if 'software' in used_domains(roles) else '# Project instructions'
+    return '\n\n'.join([head] + context_sections(roles)) + '\n'
+
+
+# Claude Code reads CLAUDE.md, not AGENTS.md; this import gives it the same project instructions.
+CLAUDE_MD = '@AGENTS.md\n'
 
 
 # Generated output of the domain helper tools; kept out of git so check runs leave the tree clean.
@@ -193,24 +238,30 @@ GITIGNORE_BLOCK = ('# Generated reports from the KiCad/FreeCAD helper tools (reg
                    '*.kicad_prl\n*.lck\nfp-info-cache\n*-backups/\n')
 
 
-def appendable_blocks(roles, context, tools=False):
+def appendable_blocks(roles, context, tools=False, platforms=()):
     """Blocks that may be appended to an existing file: {path: [(marker line, block)]}.
 
     A block is appended only when its marker line is absent, so reruns change nothing.
     """
     blocks = {}
     if context:
-        blocks[Path('AGENTS.md')] = [(s.splitlines()[0].strip(), s)
-                                     for s in (_read(DOMAIN_DIRS[d] / 'AGENTS.md').strip() + '\n' for d in kits(roles))]
+        blocks[Path('AGENTS.md')] = [(s.splitlines()[0].strip(), s + '\n') for s in context_sections(roles)]
+        if 'claude' in platforms:
+            blocks[Path('CLAUDE.md')] = [('@AGENTS.md', CLAUDE_MD)]
     if tools and kits(roles):
         blocks[Path('.gitignore')] = [('reports/', GITIGNORE_BLOCK)]
     return blocks
 
 
+# Other spellings of a marker line that already do its job.
+MARKER_ALIASES = {'reports/': {'/reports/', 'reports', '/reports'}, '@AGENTS.md': {'@./AGENTS.md'}}
+
+
 def missing_blocks(existing, blocks):
     present = {line.strip() for line in existing.splitlines()}
-    if 'reports/' in [m for m, _ in blocks] and present & {'/reports/', 'reports', '/reports'}:
-        present.add('reports/')
+    for marker, aliases in MARKER_ALIASES.items():
+        if present & aliases:
+            present.add(marker)
     return [block for marker, block in blocks if marker not in present]
 
 
@@ -222,6 +273,8 @@ def planned_files(platforms, roles, context, tools=False):
             files[path_for(role)] = render(role)
     if context:
         files[Path('AGENTS.md')] = agents_md(roles)
+        if 'claude' in platforms:
+            files[Path('CLAUDE.md')] = CLAUDE_MD
     if tools:
         for domain in kits(roles):
             base = DOMAIN_DIRS[domain] / 'files'
@@ -268,7 +321,7 @@ def main(argv=None):
         p.error(str(ex))
     platforms = list(dict.fromkeys(args.platforms))
     files = planned_files(platforms, roles, args.with_agents_md, args.with_tools)
-    appendable = appendable_blocks(roles, args.with_agents_md, args.with_tools)
+    appendable = appendable_blocks(roles, args.with_agents_md, args.with_tools, platforms)
     changes = {}
     appends = {}
     conflicts = []
@@ -298,6 +351,8 @@ def main(argv=None):
     print(f'Project: {project}\nPlatforms: {", ".join(platforms)}\nRoles: {", ".join(roles)}')
     if kits(roles) and not args.with_tools:
         print(f'Note: add --with-tools for the {"/".join(kits(roles))} helper scripts the agents refer to.')
+    if not args.with_agents_md:
+        print('Note: add --with-agents-md for the model escalation rules in AGENTS.md.')
     for rel in changes:
         print(f'{"WRITE" if args.apply else "WOULD WRITE"} {rel}')
     for rel, blocks in appends.items():
