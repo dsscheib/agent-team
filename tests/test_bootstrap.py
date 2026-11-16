@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import math
 import os
 import tempfile
 import tomllib
@@ -139,6 +140,7 @@ class BootstrapTests(unittest.TestCase):
                              f'.github/agents/{role}.agent.md', f'.agents/agents/{role}.md'):
                     self.assertTrue((p/path).is_file(), path)
             for tool in ('tools/kicad/verify.py', 'tools/kicad/fabrication_export.py', 'tools/kicad/check_availability.py',
+                         'tools/kicad/layout_metrics.py',
                          'tools/freecad/inspect_model.py',
                          'tools/freecad/check_build_volume.py', 'docs/electronics/release-checklist.md',
                          'docs/mechanical/slicing.md', 'scripts/create_parametric_plate.py'):
@@ -172,13 +174,15 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(b.main(args), 0)
             text = (p/'AGENTS.md').read_text()
             self.assertTrue(text.startswith('# Agent instructions\n\nProject rules.\n\n## Electronics (KiCad)'))
+            self.assertIn('\n\n## Model escalation: KiCad roles\n', text)
             self.assertNotIn('## Tech stack', text)
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(b.main(args), 0)
                 self.assertEqual(b.main(args[:-1] + ['--roles', 'cad-engineer', '--apply']), 0)
             text = (p/'AGENTS.md').read_text()
-            self.assertEqual(text.count('## Electronics (KiCad)'), 1)
-            self.assertEqual(text.count('## Mechanical (FreeCAD)'), 1)
+            for heading in ('## Electronics (KiCad)', '## Mechanical (FreeCAD)',
+                            '## Model escalation: KiCad roles', '## Model escalation: FreeCAD roles'):
+                self.assertEqual(text.count(heading), 1, heading)
 
     def test_tools_keep_reports_out_of_git(self):
         with tempfile.TemporaryDirectory() as td:
@@ -209,7 +213,71 @@ class BootstrapTests(unittest.TestCase):
         text = b.agents_md(['backend', 'cad-engineer'])
         self.assertIn('## Tech stack', text)
         self.assertIn('## Mechanical (FreeCAD)', text)
-        self.assertEqual(b.agents_md(['backend']), b.STARTER_AGENTS_MD)
+        self.assertLess(text.index('## Mechanical (FreeCAD)'), text.index('## Model escalation: Software roles'))
+        self.assertLess(text.index('## Model escalation: Software roles'), text.index('## Model escalation: FreeCAD roles'))
+        self.assertNotIn('## Model escalation: KiCad roles', text)
+        self.assertEqual(b.agents_md(['backend']),
+                         b.STARTER_AGENTS_MD + '\n' + b.escalation_section('software') + '\n')
+
+    def test_escalation_rules_cover_each_domain_and_point_upward(self):
+        for domain in b.DOMAIN_DIRS:
+            self.assertTrue(b.escalation_section(domain), domain)
+        rank = {'gpt-6.1-terra': 0, 'gpt-6.1-sol': 1, 'gpt-6-astra': 2, 'sonnet': 0, 'opus': 1, 'fable': 2}
+        for role, info in b.ROLES.items():
+            rule = info.get('escalation')
+            if not rule:
+                continue
+            for platform in ('codex', 'claude'):
+                model = rule[f'{platform}_model']
+                if not model:
+                    continue
+                default = (rank[info[f'{platform}_model']], b.EFFORTS.index(info.get(f'{platform}_effort') or 'medium'))
+                target = (rank[model], b.EFFORTS.index(rule[f'{platform}_effort']))
+                self.assertGreater(target, default, f'{role} {platform}')
+                self.assertIn(f'| `{role}` | {rule["when"]} |', b.escalation_section(info['domain']))
+        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation | `gpt-6.1-sol`, medium | Default |',
+                      b.escalation_section('freecad'))
+        broken = dict(b.ROLES['pcb-layout']['escalation'], claude_effort='extreme')
+        saved = b.ROLES['pcb-layout']['escalation']
+        try:
+            b.ROLES['pcb-layout']['escalation'] = broken
+            with self.assertRaises(ValueError):
+                b.caps('pcb-layout')
+        finally:
+            b.ROLES['pcb-layout']['escalation'] = saved
+
+    def test_pcb_layout_priorities_come_from_the_requirements_template(self):
+        self.assertIn('Layout priorities section of docs/electronics/design-requirements.md', b.body('pcb-layout'))
+        template = ROOT / 'domains/kicad/files/docs/electronics/design-requirements.md'
+        self.assertIn('\n## Layout priorities\n', template.read_text())
+
+    def test_every_domain_tells_specialists_to_ask_for_escalation(self):
+        for role in ('backend', 'pcb-layout', 'cad-verifier'):
+            self.assertIn('needs escalation', b.body(role))
+
+    def test_claude_md_imports_agents_md_only_for_claude(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(['--project', td, '--preset', 'core', '--with-agents-md', '--apply']), 0)
+            self.assertFalse((p/'CLAUDE.md').exists())
+            args = ['--project', td, '--platforms', 'claude', '--preset', 'core', '--with-agents-md', '--apply']
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(args), 0)
+            self.assertEqual((p/'CLAUDE.md').read_text(), b.CLAUDE_MD)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p/'CLAUDE.md').write_text('# Rules\n\nBe careful.')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(args[:1] + [td] + args[2:]), 0)
+                self.assertEqual(b.main(args[:1] + [td] + args[2:]), 0)
+            self.assertEqual((p/'CLAUDE.md').read_text(), '# Rules\n\nBe careful.\n\n@AGENTS.md\n')
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p/'CLAUDE.md').write_text('@./AGENTS.md\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(args[:1] + [td] + args[2:]), 0)
+            self.assertEqual((p/'CLAUDE.md').read_text(), '@./AGENTS.md\n')
 
     def test_kicad_verify_checks_only_root_schematics(self):
         verify = load(ROOT/'domains/kicad/files/tools/kicad/verify.py')
@@ -458,6 +526,65 @@ class BootstrapTests(unittest.TestCase):
                 self.assertNotIn('feeder_fake', err.getvalue())
         finally:
             os.environ.update(saved)
+
+    @staticmethod
+    def layout_board(numbered):
+        """A small board; numbered=True uses pre-KiCad 10 numbered nets, False the KiCad 10 named form."""
+        ids = {'GND': 1, 'SIG': 2, '+3V3': 3}
+        def net(name, pad=False):
+            if not numbered:
+                return f'(net "{name}")'
+            return f'(net {ids[name]} "{name}")' if pad else f'(net {ids[name]})'
+        declared = ''.join(f'(net {i} "{n}")' for n, i in ids.items()) if numbered else ''
+        def pad(num, x, y, name):
+            return f'(pad "{num}" smd rect (at {x} {y} 90) (size 1 1) (layers "F.Cu") {net(name, True)})'
+        return f'''(kicad_pcb (version {20250907 if numbered else 20260206}) {declared}
+  (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+  (footprint "C" (layer "F.Cu") (at 5 5 90) (property "Reference" "C1")
+    {pad(1, 1, 0, '+3V3')} {pad(2, -1, 0, 'GND')} (fp_rect (start -2 -1) (end 2 1) (layer "F.CrtYd")))
+  (footprint "U" (layer "F.Cu") (at 10 5) (property "Reference" "U1") {pad(1, 0, 0, '+3V3')} {pad(2, 0, 2, 'GND')})
+  (footprint "J" (layer "F.Cu") (at 30 5) (property "Reference" "J1"))
+  (segment (start 0 2) (end 10 2) (width 0.2) (layer "F.Cu") {net('SIG')})
+  (arc (start 0 0) (mid 0.7071067811865476 0.2928932188134524) (end 1 1) (width 0.2) (layer "B.Cu") {net('SIG')})
+  (via (at 10 2) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") {net('SIG')})
+  (zone {net('GND')} (layer "B.Cu") (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 5 0) (xy 5 10) (xy 0 10)))))
+'''
+
+    def test_layout_metrics_measure_both_net_formats(self):
+        lm = load(ROOT/'domains/kicad/files/tools/kicad/layout_metrics.py')
+        for numbered in (True, False):
+            board = lm.Board(self.layout_board(numbered))
+            r = lm.measure(board, nets=['SIG'], decoupling=[('U1', ['C1'])], loops=[['C1.1', 'C1.2', 'U1.2', 'U1.1']])
+            self.assertEqual(r['outline'], {'width_mm': 20, 'height_mm': 10, 'area_mm2': 200})
+            self.assertEqual((r['courtyards']['width_mm'], r['courtyards']['height_mm']), (2, 4))  # rotated 90 degrees
+            self.assertEqual(r['footprints_outside_outline'], ['J1'])
+            self.assertEqual(r['vias'], 1)
+            sig = r['nets']['SIG']
+            self.assertAlmostEqual(sig['length_mm'], 10 + math.pi / 2, places=3)
+            self.assertEqual((sig['vias'], sig['layers']), (1, ['F.Cu', 'B.Cu']))
+            # Half the F.Cu segment lies over the B.Cu ground zone; the B.Cu arc has no zone above it.
+            self.assertAlmostEqual(sig['over_reference_plane'], 5 / (10 + math.pi / 2), places=3)
+            # C1 pad 1 lands at (5, 4) after rotation; U1 pad 1 is at (10, 5). GND is ignored.
+            self.assertEqual(r['decoupling'], [{'ic': 'U1', 'capacitor': 'C1', 'net': '+3V3', 'ic_pin': '1',
+                                                'distance_mm': round(math.hypot(5, 1), 3)}])
+            self.assertEqual(r['loops'][0]['area_mm2'], 10)
+        with self.assertRaisesRegex(ValueError, 'did you mean SIG'):
+            lm.measure(lm.Board(self.layout_board(False)), nets=['SIGG'])
+
+    def test_layout_metrics_command_writes_report(self):
+        lm = load(ROOT/'domains/kicad/files/tools/kicad/layout_metrics.py')
+        with tempfile.TemporaryDirectory() as td:
+            board = Path(td)/'b.kicad_pcb'
+            board.write_text(self.layout_board(False))
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(lm.main([str(board), '--net', 'SIG', '--pair', 'SIG', '+3V3']), 0)
+            self.assertIn('Pair SIG / +3V3', out.getvalue())
+            report = json.loads((Path(td)/'reports/kicad/b-layout-metrics.json').read_text())
+            self.assertEqual(report['pairs'][0]['nets'], ['SIG', '+3V3'])
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(lm.main([str(board), '--loop', 'C1.1,C1.9,U1.1']), 2)
+            self.assertIn('C1 has no pad', err.getvalue())
 
     def test_domain_scripts_compile(self):
         for script in (ROOT/'domains').rglob('*.py'):
