@@ -4,7 +4,7 @@ A **stack-neutral, opt-in** installer for project-local subagents in **Codex CLI
 
 ## Quick start
 
-From this extracted package:
+From this repository:
 
 ```bash
 python3 bootstrap.py --list
@@ -103,6 +103,60 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 - Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for the roles that use Astra on Codex. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
 - Antigravity defaults: `model: inherit` for every role. Subagent files accept only the tiers `inherit`, `flash_lite`, `flash` and `pro`, not model IDs, and in agy 1.5.8 both `pro` and `flash` ran on `gemini-3.8-flash-tiered` while `inherit` ran on the parent's model (tested 2026-11-13 against a `gemini-4-carbon-high` parent). Every role therefore runs on the session's model: start reviews and audits on the strongest Gemini 4 model you have, for example `agy --model gemini-4-carbon-high`, or pick it with `/model`. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
+
+### Codex primary agent
+
+These are task-based starting points, not benchmark results for your project. The installer leaves the primary model and effort unchanged. Select them in your Codex session with `/model` or configure them separately in the target project's `.codex/config.toml`, for example:
+
+```toml
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
+```
+
+In the tables below, Sol means `gpt-6.1-sol`, Terra means `gpt-6.1-terra`, and Astra means `gpt-6-astra`.
+
+| Project / preset | Recommended primary | Adjust for the task |
+|---|---|---|
+| General software / `core` | Sol High | Medium for small, well-defined changes; Astra High for difficult architecture or elusive failures. |
+| Web application / `web` | Sol High | Terra Medium for sessions dominated by styling, visual iteration and content. |
+| Backend, API, database / `service` | Sol High | Astra High for distributed consistency, major migrations or complex security architecture. |
+| Broad software / `full` | Sol High | Astra High for major redesigns across subsystems. |
+| Ordinary PCB / `kicad-core` | Sol High | Astra High when novel circuit design and unresolved engineering decisions dominate. |
+| Complex electronics / `kicad-full` | Astra High | Sol High for implementation after architecture and constraints are settled. |
+| Ordinary CAD and FDM / `freecad-core` | Sol High | Medium for simple dimensional edits and familiar parametric parts. |
+| Complex assemblies / `freecad-full` | Astra High | Sol High for straightforward modeling and enclosure implementation. |
+| Combined PCB, firmware and enclosure | Astra High | Extra High (`xhigh`) for major cross-domain design reviews or especially difficult tradeoffs. |
+
+Installing a `full` preset alone does not require Astra: choose based on the actual work. Astra High is also a reasonable quality-first primary when usage and latency matter less. Reserve Max for exceptional reasoning problems and Ultra for work that benefits from its subagent delegation.
+
+### Codex specialist effort and escalation
+
+The catalog sets integration testing and PCB manufacturing to High because their full responsibilities include failure-mode design and fabrication readiness. CAD verification defaults to Medium for its established inspection scripts. Other defaults retain the existing model split. The three auditors retain Astra Extra High for deep, comprehensive audits; use High for routine reviews or consultations.
+
+Choose these overrides before delegation by configuring the relevant agent file or using model/effort overrides supported by your client. They are guidance, not automatic routing: generated agent files have one fixed model and effort. If a specialist encounters a task needing escalation, the primary should reassess and reassign it with the appropriate settings.
+
+| Specialist | Task-specific override |
+|---|---|
+| `frontend` | Sol High for complex state management, asynchronous behavior and application logic; retain Terra Medium for visual/component work. |
+| `devops` | Sol Medium for small, familiar CI edits. |
+| `integration-tester` | Sol Medium when running established suites; retain High for test design involving concurrency, recovery, authorization or migrations. |
+| `ux-designer` | Terra Medium for straightforward visual feedback. |
+| `auditor-advisor`, `hardware-auditor`, `mechanical-auditor` | Astra High for incremental reviews and routine consultations; retain Extra High for comprehensive audits. |
+| `circuit-designer` | Astra High for novel analog, mixed-signal or protection design. |
+| `pcb-layout` | Astra High for difficult electrical/layout tradeoffs. |
+| `pcb-manufacturing` | Sol Medium for export staging and established checklists; retain High for final fabrication/assembly readiness. |
+| `hardware-bringup` | Astra High for ambiguous fault diagnosis spanning several subsystems. |
+| `power-electronics` | Astra Extra High for difficult stability, transient and interacting protection problems. |
+| `signal-integrity` | Astra Extra High for difficult return-path, stackup and coupling tradeoffs. |
+| `mechanical-engineer` | Astra High for coupled load, material, thermal and tolerance analysis. |
+| `electronics-enclosure` | Astra High when thermal, electrical and mechanical requirements conflict. |
+| `printability-engineer` | Sol High for load-bearing parts, anisotropy and tight fits. |
+| `slicer-specialist` | Sol Medium for substantial scripting or export automation; retain Terra Medium for visual slicer workflows. |
+| `cad-verifier` | Sol High for unexplained geometry or export failures. |
+
+Keep component engineering and electrical verification on Sol High: their responsibilities include pinouts, footprints, ratings and engineering validation beyond automated rule checks. Backend, database, performance, firmware, CAD and assembly implementation also retain Sol High. Frontend testing and documentation retain Terra Medium.
+
+Higher effort takes more time and tokens; validate these choices on representative tasks and adjust based on observed results. See the [official model and reasoning-effort guidance](https://learn.chatgpt.com/docs/models). Model availability is client/account dependent: the local CLI 0.162.1 model listing checked on 2026-11-16 omitted Terra, although the official guide supports explicit Terra selection on CLI 0.159.0+. Confirm it works in your target session before relying on Terra roles.
 
 ## Verification
 
