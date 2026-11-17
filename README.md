@@ -98,7 +98,7 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 ## Models and constraints
 
-- Codex defaults: Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), Terra for UI/docs and slicer work, Astra for security, auditors, power electronics and signal integrity; reasoning medium/high/xhigh as appropriate.
+- Codex defaults use GPT-6.2 Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), GPT-6.1 Terra for UI, documentation and slicer work, and GPT-6.2 Astra for security, auditors, power electronics and signal integrity. Reasoning effort ranges from Medium to Extra High.
 - Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), component engineering and electrical verification (where a pin, footprint or rating error forces a board respin), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
 - Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for the roles that use Astra on Codex. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
 - Antigravity defaults: `model: inherit` for every role. Subagent files accept only the tiers `inherit`, `flash_lite`, `flash` and `pro`, not model IDs, and in agy 1.5.8 both `pro` and `flash` ran on `gemini-3.8-flash-tiered` while `inherit` ran on the parent's model (tested 2026-11-13 against a `gemini-4-carbon-high` parent). Every role therefore runs on the session's model: start reviews and audits on the strongest Gemini 4 model you have, for example `agy --model gemini-4-carbon-high`, or pick it with `/model`. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
@@ -109,11 +109,11 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 These are task-based starting points, not benchmark results for your project. The installer leaves the primary model and effort unchanged. Select them in your Codex session with `/model` or configure them separately in the target project's `.codex/config.toml`, for example:
 
 ```toml
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 ```
 
-In the tables below, Sol means `gpt-6.1-sol`, Terra means `gpt-6.1-terra`, and Astra means `gpt-6-astra`.
+In the tables below, Sol means `gpt-6.2-sol`, Terra means `gpt-6.1-terra`, and Astra means `gpt-6.2-astra`.
 
 | Project / preset | Recommended primary | Adjust for the task |
 |---|---|---|
@@ -224,7 +224,9 @@ The primary still decides whether a task matches a rule, so review delegations o
 
 Codex loads project agents from `.codex/agents/` only after you trust the project. In an untrusted project it sees none of them, so trust the project before testing. No `[agents."<name>"]` entry in `config.toml` is needed. Older Codex releases used one with `config_file`, but Codex CLI 0.167.2 ignores its description and reads the agent file instead. Subagents are on by default; `agents.enabled = false` in your configuration turns them off.
 
-The Codex model names in `catalog/roles.json` (`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`) are in Codex CLI 0.167.2's built-in model list. Check yours with `codex debug models`, or clear `codex_model` to use the parent session's model.
+Check the models available to your Codex client with `codex debug models`. To use the parent session's model for a role, set its `codex_model` to an empty string in the catalog before generating the agent.
+
+For an existing installation, update the `model` values in `.codex/agents/*.toml` and the Codex entries in the model escalation tables in `AGENTS.md`, if present. Replace `gpt-6.1-sol` with `gpt-6.2-sol` and `gpt-6-astra` with `gpt-6.2-astra`.
 
 ## Customization
 

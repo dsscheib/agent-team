@@ -27,6 +27,8 @@ class BootstrapTests(unittest.TestCase):
             parsed = tomllib.loads(b.codex_agent(role))
             self.assertEqual(parsed['name'], role)
             self.assertEqual(parsed['description'], b.ROLES[role]['description'])
+            self.assertEqual(parsed.get('model'), b.ROLES[role]['codex_model'] or None)
+            self.assertEqual(parsed.get('model_reasoning_effort'), b.ROLES[role]['codex_effort'] or None)
             self.assertIn('developer_instructions', parsed)
             self.assertNotIn('sandbox_mode', parsed)
             runs = b.caps(role)['run']
@@ -222,7 +224,7 @@ class BootstrapTests(unittest.TestCase):
     def test_escalation_rules_cover_each_domain_and_point_upward(self):
         for domain in b.DOMAIN_DIRS:
             self.assertTrue(b.escalation_section(domain), domain)
-        rank = {'gpt-6.1-terra': 0, 'gpt-6.1-sol': 1, 'gpt-6-astra': 2, 'sonnet': 0, 'opus': 1, 'fable': 2}
+        rank = {'gpt-6.1-terra': 0, 'gpt-6.2-sol': 1, 'gpt-6.2-astra': 2, 'sonnet': 0, 'opus': 1, 'fable': 2}
         for role, info in b.ROLES.items():
             rule = info.get('escalation')
             if not rule:
@@ -235,7 +237,7 @@ class BootstrapTests(unittest.TestCase):
                 target = (rank[model], b.EFFORTS.index(rule[f'{platform}_effort']))
                 self.assertGreater(target, default, f'{role} {platform}')
                 self.assertIn(f'| `{role}` | {rule["when"]} |', b.escalation_section(info['domain']))
-        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation | `gpt-6.1-sol`, medium | Default |',
+        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation | `gpt-6.2-sol`, medium | Default |',
                       b.escalation_section('freecad'))
         broken = dict(b.ROLES['pcb-layout']['escalation'], claude_effort='extreme')
         saved = b.ROLES['pcb-layout']['escalation']
