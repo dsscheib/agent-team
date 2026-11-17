@@ -15,6 +15,7 @@ def _read(path):
 ROLES = json.loads(_read(ROOT / 'catalog/roles.json'))
 DETAILS = json.loads(_read(ROOT / 'catalog/role_details.json'))
 PLATFORMS = ('codex', 'claude', 'copilot', 'antigravity')
+ESCALATION_PLATFORMS = ('codex', 'claude', 'copilot')
 
 # Each role belongs to one domain. A domain has shared operating principles and, except for
 # software, a kit: an AGENTS.md section plus helper files laid out under files/ at their install paths.
@@ -83,18 +84,24 @@ Describe the purpose, audience, and key workflows of this repository.
 
 
 def caps(role):
-    kind = ROLES[role]['kind']
+    info = ROLES[role]
+    kind = info['kind']
     if kind not in KINDS:
         raise ValueError(f'Role {role!r} has unknown kind {kind!r}; expected one of {", ".join(KINDS)}')
-    if ROLES[role]['domain'] not in DOMAIN_DIRS:
-        raise ValueError(f'Role {role!r} has unknown domain {ROLES[role]["domain"]!r}')
-    rule = ROLES[role].get('escalation')
+    if info['domain'] not in DOMAIN_DIRS:
+        raise ValueError(f'Role {role!r} has unknown domain {info["domain"]!r}')
+    rule = info.get('escalation')
     if rule is not None:
-        if not rule.get('when') or not (rule.get('codex_model') or rule.get('claude_model')):
-            raise ValueError(f'Role {role!r} escalation needs "when" and a Codex or Claude model')
-        for platform in ('codex', 'claude'):
-            if rule.get(f'{platform}_model') and rule.get(f'{platform}_effort') not in EFFORTS:
+        has_model = any(rule.get(f'{platform}_model') for platform in ESCALATION_PLATFORMS)
+        if not rule.get('when') or not (has_model or rule.get('copilot_effort')):
+            raise ValueError(f'Role {role!r} escalation needs "when" and a platform setting')
+        for platform in ESCALATION_PLATFORMS:
+            model = rule.get(f'{platform}_model')
+            effort = rule.get(f'{platform}_effort')
+            if (model or (platform == 'copilot' and effort)) and effort not in EFFORTS:
                 raise ValueError(f'Role {role!r} escalation {platform}_effort must be one of {", ".join(EFFORTS)}')
+        if info['copilot_model'] and rule.get('copilot_model'):
+            raise ValueError(f'Role {role!r} has a required Copilot model and can escalate only its effort')
     return KINDS[kind]
 
 
@@ -147,8 +154,13 @@ def copilot_agent(role):
     c = caps(role)
     tools = ['read', 'search'] + (['edit'] if c['edit'] else []) + (['execute'] if c['run'] else [])
     lines = []
-    if ROLES[role]['copilot_model']:
-        lines += [f'model: {ROLES[role]["copilot_model"]}', 'model-policy: required']
+    model = ROLES[role]['copilot_model']
+    fallback_model = ROLES[role].get('copilot_fallback_model')
+    if model:
+        lines += [f'model: {fallback_model or model}', 'model-policy: required']
+        if fallback_model:
+            # The ordered list overrides the scalar on clients that support it.
+            lines.append(f'models: {json.dumps([model, fallback_model])}')
     lines += [f'tools: {json.dumps(tools)}', 'strict-tools-list: true', 'include-custom-instructions: true']
     return frontmatter(role, lines)
 
@@ -190,10 +202,11 @@ def kits(roles):
 DOMAIN_NAMES = {'software': 'Software', 'kicad': 'KiCad', 'freecad': 'FreeCAD'}
 EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 
-ESCALATION_INTRO = '''Each specialist's agent file sets a default model and effort. When a delegated task matches a row below, delegate it at the listed setting instead:
+ESCALATION_INTRO = '''Specialists use their configured or inherited model and effort. When a task matches a row below, delegate it at the listed setting.
 - Claude Code: set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.
 - Codex: pass the listed values as the model and reasoning effort overrides when spawning the agent.
-- Copilot CLI and Antigravity, where most roles run on the session's model: use a stronger session model for these tasks.
+- Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Use an explicit session model for targeted delegation because Auto can make subagents inherit the session model. If a GPT-6.2 override is unavailable, use `claude-opus-5.5` at the listed effort for roles without a required model.
+- Antigravity uses the session model. Use a stronger session model for these tasks.
 - "Default" means the role's default is already suited; a role not installed in this project does not apply.
 
 If a specialist reports that its task needs escalation, delegate it again at the listed setting rather than accepting a reduced-confidence result.'''
@@ -207,14 +220,20 @@ def used_domains(roles):
 def escalation_section(domain):
     """Model escalation rules for every role of a domain, so the section is the same whichever roles are installed."""
     def setting(rule, platform):
-        model = rule[f'{platform}_model']
-        return f'`{model}`, {rule[f"{platform}_effort"]}' if model else 'Default'
-    rows = [f'| `{role}` | {rule["when"]} | {setting(rule, "codex")} | {setting(rule, "claude")} |'
+        model = rule.get(f'{platform}_model')
+        effort = rule.get(f'{platform}_effort')
+        if model:
+            return f'`{model}`, {effort}'
+        if platform == 'copilot' and effort:
+            return f'Agent model, {effort}'
+        return 'Default'
+    rows = [f'| `{role}` | {rule["when"]} | '
+            + ' | '.join(setting(rule, platform) for platform in ESCALATION_PLATFORMS) + ' |'
             for role in domain_roles(domain) if (rule := ROLES[role].get('escalation'))]
     if not rows:
         return ''
     return '\n'.join([f'## Model escalation: {DOMAIN_NAMES[domain]} roles', '', ESCALATION_INTRO, '',
-                      '| Role | Escalate when | Codex | Claude Code |', '|---|---|---|---|'] + rows)
+                      '| Role | Escalate when | Codex | Claude Code | Copilot CLI |', '|---|---|---|---|---|'] + rows)
 
 
 def context_sections(roles):

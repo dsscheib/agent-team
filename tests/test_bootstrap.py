@@ -92,6 +92,14 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotIn('"grep"', fm)
             self.assertNotIn('"glob"', fm)
 
+    def test_copilot_astra_model_priority(self):
+        pinned = b.copilot_agent('security').split('---')[1].splitlines()
+        self.assertIn('models: ["gpt-6.2-astra", "gpt-6-astra"]', pinned)
+        self.assertIn('model: gpt-6-astra', pinned)
+        self.assertIn('model-policy: required', pinned)
+        inherited = b.copilot_agent('backend').split('---')[1].splitlines()
+        self.assertFalse(any(line.startswith('model') for line in inherited))
+
     def test_frontmatter_survives_yaml_special_characters(self):
         saved = b.ROLES['backend']['description']
         try:
@@ -237,7 +245,8 @@ class BootstrapTests(unittest.TestCase):
                 target = (rank[model], b.EFFORTS.index(rule[f'{platform}_effort']))
                 self.assertGreater(target, default, f'{role} {platform}')
                 self.assertIn(f'| `{role}` | {rule["when"]} |', b.escalation_section(info['domain']))
-        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation | `gpt-6.2-sol`, medium | Default |',
+        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation | '
+                      '`gpt-6.2-sol`, medium | Default | `gpt-6.2-sol`, medium |',
                       b.escalation_section('freecad'))
         broken = dict(b.ROLES['pcb-layout']['escalation'], claude_effort='extreme')
         saved = b.ROLES['pcb-layout']['escalation']
@@ -247,6 +256,31 @@ class BootstrapTests(unittest.TestCase):
                 b.caps('pcb-layout')
         finally:
             b.ROLES['pcb-layout']['escalation'] = saved
+
+    def test_copilot_escalation_respects_required_models(self):
+        for role, info in b.ROLES.items():
+            if rule := info.get('escalation'):
+                with self.subTest(role=role):
+                    table = b.escalation_section(info['domain'])
+                    row = next(line for line in table.splitlines() if line.startswith(f'| `{role}` |'))
+                    model = rule.get('copilot_model')
+                    effort = rule['copilot_effort']
+                    if info['copilot_model']:
+                        self.assertFalse(model)
+                        self.assertTrue(row.endswith(f'| Agent model, {effort} |'))
+                    else:
+                        self.assertIn(model, ('gpt-6.2-sol', 'gpt-6.2-astra', 'claude-opus-5.5'))
+                        self.assertTrue(row.endswith(f'| `{model}`, {effort} |'))
+        saved = b.ROLES['security']['escalation']
+        try:
+            b.ROLES['security']['escalation'] = dict(saved, copilot_model='claude-opus-5.5')
+            with self.assertRaisesRegex(ValueError, 'required Copilot model'):
+                b.caps('security')
+            b.ROLES['security']['escalation'] = dict(saved, copilot_effort='extreme')
+            with self.assertRaisesRegex(ValueError, 'copilot_effort'):
+                b.caps('security')
+        finally:
+            b.ROLES['security']['escalation'] = saved
 
     def test_pcb_layout_priorities_come_from_the_requirements_template(self):
         self.assertIn('Layout priorities section of docs/electronics/design-requirements.md', b.body('pcb-layout'))

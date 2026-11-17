@@ -100,7 +100,7 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 - Codex defaults use GPT-6.2 Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), GPT-6.1 Terra for UI, documentation and slicer work, and GPT-6.2 Astra for security, auditors, power electronics and signal integrity. Reasoning effort ranges from Medium to Extra High.
 - Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), component engineering and electrical verification (where a pin, footprint or rating error forces a board respin), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
-- Copilot defaults: inherit the CLI-selected model for most roles, pin `gpt-6-astra` with required policy for the roles that use Astra on Codex. Confirm your Copilot subscription supports it. Tools use the documented aliases `read`, `search`, `edit` and `execute`; Copilot silently ignores names it does not recognize.
+- Most Copilot roles inherit the CLI-selected model. Security, auditors, power electronics and signal integrity prefer `gpt-6.2-astra` when the account has access and fall back to `gpt-6-astra`. Those roles use the required model policy. Tools use the documented aliases `read`, `search`, `edit` and `execute`. Copilot silently ignores names it does not recognize. [Copilot CLI agent settings](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
 - Antigravity defaults: `model: inherit` for every role. Subagent files accept only the tiers `inherit`, `flash_lite`, `flash` and `pro`, not model IDs, and in agy 1.5.8 both `pro` and `flash` ran on `gemini-3.8-flash-tiered` while `inherit` ran on the parent's model (tested 2026-11-13 against a `gemini-4-carbon-high` parent). Every role therefore runs on the session's model: start reviews and audits on the strongest Gemini 4 model you have, for example `agy --model gemini-4-carbon-high`, or pick it with `/model`. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
 
@@ -202,12 +202,23 @@ Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in
 
 Component engineering and electrical verification run on Opus by default, like their Codex counterparts on Sol High. Backend, database, performance, firmware, CAD, assembly and slicer work, frontend testing, UX review and documentation retain Sonnet. Validate these choices on representative tasks and adjust based on observed results. See the [Claude Code subagent documentation](https://code.claude.com/docs/en/sub-agents) for supported frontmatter fields.
 
+### Copilot CLI specialist overrides
+
+The Copilot column in the generated escalation tables gives the model and reasoning effort for each task. These recommendations are based on the roles' responsibilities and the models' published strengths. [GitHub Copilot model comparison](https://docs.github.com/en/copilot/reference/ai-models/model-comparison) · [OpenAI model guide](https://learn.chatgpt.com/docs/models)
+
+- **GPT-6.2 Sol** at High for complex frontend logic and Medium for slicer scripting and export automation.
+- **GPT-6.2 Astra** at High for PCB layout tradeoffs, board bring-up, conflicting enclosure requirements and unexplained CAD failures. These tasks can require several rounds of diagnosis and verification.
+- **Claude Opus 5.5** at High for failure-mode test design, novel circuit design, final fabrication review, coupled mechanical analysis and difficult printability decisions.
+- **Agent model** at Extra High (`xhigh`) for complex security reviews, comprehensive audits and difficult power or signal-integrity work. The profile selects its required Astra model, and the dispatch sets the effort.
+
+For one task, set `model` and `reasoning_effort` on the Copilot `task` call. For a standing per-agent override, use `/subagents`. Select an explicit session model when you need targeted delegation because Auto can make subagents inherit the session model. For roles without a required model, use Claude Opus 5.5 at the listed effort if the recommended GPT-6.2 model is unavailable in your Copilot account. [Copilot CLI dispatch rules](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
+
 ### Model escalation
 
 The specialist tables above only help if the primary agent knows them, so escalation is installed in three layers:
 
-1. **Defaults.** Roles where a miss is expensive start on a strong model, so they need no escalation.
-2. **Rules for the primary.** `--with-agents-md` writes a `## Model escalation: <domain> roles` section to `AGENTS.md` for each domain selected, generated from the `escalation` entries in `catalog/roles.json`. Each row names a role, the kind of task that warrants escalation and the Codex and Claude Code setting to use. The primary applies it when delegating: Claude Code's subagent call takes `model` and `effort` that override the agent file (and sets effort only when instructions ask, which this section does); Codex CLI 0.169.0's `spawn_agent` takes model and reasoning effort overrides. Copilot CLI and Antigravity roles mostly run on the session's model, so there the rule means starting a stronger session. Each section lists every escalation rule of its domain, so it stays correct when you install more roles later.
+1. **Defaults.** Each specialist starts with its configured or inherited model and reasoning effort.
+2. **Rules for the primary.** `--with-agents-md` writes a `## Model escalation: <domain> roles` section to `AGENTS.md` for each selected domain. Each row gives a task trigger and the settings to use in Codex, Claude Code and Copilot CLI. The primary applies the settings on the delegation call. On Antigravity, select a stronger session model. Each section covers the whole domain so it also applies when you install more roles later.
 3. **Specialists ask.** Every role's shared practices tell it to stop and report that a task needs escalation, and why, rather than finish at reduced confidence. The escalation section tells the primary to delegate such a task again at the listed setting.
 
 The primary still decides whether a task matches a rule, so review delegations on important work.
@@ -228,9 +239,15 @@ Check the models available to your Codex client with `codex debug models`. To us
 
 For an existing installation, update the `model` values in `.codex/agents/*.toml` and the Codex entries in the model escalation tables in `AGENTS.md`, if present. Replace `gpt-6.1-sol` with `gpt-6.2-sol` and `gpt-6-astra` with `gpt-6.2-astra`.
 
+### Copilot model migration
+
+For existing Copilot agents that pin `gpt-6-astra`, add `models: ["gpt-6.2-astra", "gpt-6-astra"]` to the frontmatter in `.github/agents/*.agent.md`. Keep `model: gpt-6-astra` for clients that only read the single-model field.
+
+To refresh existing escalation guidance, use the same presets with `--with-agents-md --apply` in a temporary project, then merge the updated escalation sections from its `AGENTS.md` into your project's copy.
+
 ## Customization
 
-Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules (`when`, plus `codex_model`/`codex_effort` and `claude_model`/`claude_effort`, either pair empty for no change), and `catalog/role_details.json` to change responsibilities. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer and tool facts live in the kit's `AGENTS.md` section, not in the agents, so edit that section for a different printer. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
+Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules, and `catalog/role_details.json` to change responsibilities. Each escalation rule defines `when` and can set `codex_model`/`codex_effort`, `claude_model`/`claude_effort` or `copilot_model`/`copilot_effort`. For a required Copilot model, set only `copilot_effort` in the escalation rule. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer and tool facts live in the kit's `AGENTS.md` section, not in the agents, so edit that section for a different printer. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
 
 Documentation references (agent file fields and tool names for Codex, Copilot CLI and Antigravity checked 2026-11-13):
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
