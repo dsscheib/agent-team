@@ -15,7 +15,7 @@ All arms run the `pcb-layout` subagent at effort `high`, with the primary sessio
 
 A against B measures the guidance. B, C and D measure the model. Fable is priced above Opus and Opus above Sonnet, so a more expensive arm has to win clearly.
 
-Optional for Codex: the same comparison with `gpt-6.1-sol` and `gpt-6-astra` at `high`.
+For Codex, the same comparison can use `gpt-6.2-sol` and `gpt-6.2-astra` at `high`.
 
 ## Test boards
 
