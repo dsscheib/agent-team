@@ -100,7 +100,7 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 - Codex defaults use GPT-6.2 Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), GPT-6.1 Terra for UI, documentation and slicer work, and GPT-6.2 Astra for security, auditors, power electronics and signal integrity. Reasoning effort ranges from Medium to Extra High.
 - Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), component engineering and electrical verification (where a pin, footprint or rating error forces a board respin), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
-- Most Copilot roles inherit the CLI-selected model. Security, auditors, power electronics and signal integrity prefer `gpt-6.2-astra` when the account has access and fall back to `gpt-6-astra`. Those roles use the required model policy. Tools use the documented aliases `read`, `search`, `edit` and `execute`. Copilot silently ignores names it does not recognize. [Copilot CLI agent settings](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
+- Most Copilot roles inherit the CLI-selected model. Security, auditors, power electronics and signal integrity prefer `gpt-6.2-astra` when the account has access and fall back to `gpt-6-astra`. Those roles set `modelPolicy: required`, so Copilot refuses to dispatch them on any other model instead of falling back to the session model. Tools use the documented aliases `read`, `search`, `edit` and `execute`. Copilot silently ignores names it does not recognize. [Copilot CLI agent settings](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
 - Antigravity defaults: `model: inherit` for every role. Subagent files accept only the tiers `inherit`, `flash_lite`, `flash` and `pro`, not model IDs, and in agy 1.5.8 both `pro` and `flash` ran on `gemini-3.8-flash-tiered` while `inherit` ran on the parent's model (tested 2026-11-13 against a `gemini-4-carbon-high` parent). Every role therefore runs on the session's model: start reviews and audits on the strongest Gemini 4 model you have, for example `agy --model gemini-4-carbon-high`, or pick it with `/model`. Tools are limited to the documented `view_file`, `grep_search`, `replace_file_content` and `run_command`, because an unknown tool name can hang an Antigravity subagent.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
 
@@ -206,12 +206,12 @@ Component engineering and electrical verification run on Opus by default, like t
 
 The Copilot column in the generated escalation tables gives the model and reasoning effort for each task. These recommendations are based on the roles' responsibilities and the models' published strengths. [GitHub Copilot model comparison](https://docs.github.com/en/copilot/reference/ai-models/model-comparison) · [OpenAI model guide](https://learn.chatgpt.com/docs/models)
 
-- **GPT-6.2 Sol** at High for complex frontend logic and Medium for slicer scripting and export automation.
-- **GPT-6.2 Astra** at High for PCB layout tradeoffs, board bring-up, conflicting enclosure requirements and unexplained CAD failures. These tasks can require several rounds of diagnosis and verification.
+- **GPT-6.2 Sol** at High for complex frontend logic and unexplained CAD failures, and Medium for slicer scripting and export automation.
+- **GPT-6.2 Astra** at High for PCB layout tradeoffs, board bring-up and conflicting enclosure requirements. These tasks can require several rounds of diagnosis and verification.
 - **Claude Opus 5.5** at High for failure-mode test design, novel circuit design, final fabrication review, coupled mechanical analysis and difficult printability decisions.
 - **Agent model** at Extra High (`xhigh`) for complex security reviews, comprehensive audits and difficult power or signal-integrity work. The profile selects its required Astra model, and the dispatch sets the effort.
 
-For one task, set `model` and `reasoning_effort` on the Copilot `task` call. For a standing per-agent override, use `/subagents`. Select an explicit session model when you need targeted delegation because Auto can make subagents inherit the session model. For roles without a required model, use Claude Opus 5.5 at the listed effort if the recommended GPT-6.2 model is unavailable in your Copilot account. [Copilot CLI dispatch rules](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
+For one task, set `model` and `reasoning_effort` on the Copilot `task` call. For a standing per-agent override, use `/subagents`. Select an explicit session model before delegating: under Auto, every subagent runs on the session model and ignores both per-call overrides and the agent's `model`/`models`, even with `modelPolicy: required`. An override the account cannot use does not fail; Copilot silently runs the task on the session model. Confirm that your account offers the recommended GPT-6.2 models, and for roles without a required model use Claude Opus 5.5 at the listed effort if one is missing. [Copilot CLI dispatch rules](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
 
 ### Model escalation
 
@@ -241,7 +241,7 @@ For an existing installation, update the `model` values in `.codex/agents/*.toml
 
 ### Copilot model migration
 
-For existing Copilot agents that pin `gpt-6-astra`, add `models: ["gpt-6.2-astra", "gpt-6-astra"]` to the frontmatter in `.github/agents/*.agent.md`. Keep `model: gpt-6-astra` for clients that only read the single-model field.
+For existing Copilot agents that pin `gpt-6-astra`, add `models: ["gpt-6.2-astra", "gpt-6-astra"]` to the frontmatter in `.github/agents/*.agent.md`. Keep `model: gpt-6-astra` for clients that only read the single-model field. Earlier versions wrote the policy as `model-policy: required`, which is not the documented key, so rename it to `modelPolicy: required`. Without that rename, those agents ran under the default `preferred` policy.
 
 To refresh existing escalation guidance, use the same presets with `--with-agents-md --apply` in a temporary project, then merge the updated escalation sections from its `AGENTS.md` into your project's copy.
 
