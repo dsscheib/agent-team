@@ -157,7 +157,7 @@ def copilot_agent(role):
     model = ROLES[role]['copilot_model']
     fallback_model = ROLES[role].get('copilot_fallback_model')
     if model:
-        lines += [f'model: {fallback_model or model}', 'model-policy: required']
+        lines += [f'model: {fallback_model or model}', 'modelPolicy: required']
         if fallback_model:
             # The ordered list overrides the scalar on clients that support it.
             lines.append(f'models: {json.dumps([model, fallback_model])}')
@@ -205,7 +205,7 @@ EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 ESCALATION_INTRO = '''Specialists use their configured or inherited model and effort. When a task matches a row below, delegate it at the listed setting.
 - Claude Code: set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.
 - Codex: pass the listed values as the model and reasoning effort overrides when spawning the agent.
-- Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Use an explicit session model for targeted delegation because Auto can make subagents inherit the session model. If a GPT-6.2 override is unavailable, use `claude-opus-5.5` at the listed effort for roles without a required model.
+- Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Select an explicit session model first: under Auto, every subagent runs on the session model, ignoring both overrides and the agent's own model, including a required one. Copilot does not report an unavailable override; the task silently runs on the session model. Before relying on a GPT-6.2 row, confirm the account offers that model; if it does not, use `claude-opus-5.5` at the listed effort for roles without a required model.
 - Antigravity uses the session model. Use a stronger session model for these tasks.
 - "Default" means the role's default is already suited; a role not installed in this project does not apply.
 
