@@ -96,7 +96,8 @@ class BootstrapTests(unittest.TestCase):
         pinned = b.copilot_agent('security').split('---')[1].splitlines()
         self.assertIn('models: ["gpt-6.2-astra", "gpt-6-astra"]', pinned)
         self.assertIn('model: gpt-6-astra', pinned)
-        self.assertIn('model-policy: required', pinned)
+        self.assertIn('modelPolicy: required', pinned)
+        self.assertFalse(any(line.startswith('model-policy') for line in pinned))
         inherited = b.copilot_agent('backend').split('---')[1].splitlines()
         self.assertFalse(any(line.startswith('model') for line in inherited))
 
