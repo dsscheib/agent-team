@@ -92,6 +92,29 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotIn('"grep"', fm)
             self.assertNotIn('"glob"', fm)
 
+    def test_antigravity_policies_tools_and_guidance(self):
+        for role in b.ROLES:
+            c = b.caps(role)
+            fm = b.antigravity_agent(role).split('---')[1]
+            self.assertIn('model: inherit', fm, role)
+            if c['run']:
+                self.assertIn('commandExecutionPolicy: sandbox', fm, role)
+                self.assertNotIn('commandExecutionPolicy: off', fm, role)
+                self.assertIn('  - run_command', fm, role)
+            else:
+                self.assertIn('commandExecutionPolicy: off', fm, role)
+                self.assertNotIn('commandExecutionPolicy: sandbox', fm, role)
+                self.assertNotIn('run_command', fm, role)
+            if c['edit']:
+                self.assertIn('  - write_to_file', fm, role)
+                self.assertIn('  - replace_file_content', fm, role)
+            else:
+                self.assertNotIn('write_to_file', fm, role)
+                self.assertNotIn('replace_file_content', fm, role)
+        self.assertIn('read_file', b.STARTER_AGENTS_MD)
+        self.assertIn('Orchestrator', b.ESCALATION_INTRO)
+        self.assertIn('Swarm', b.ESCALATION_INTRO)
+
     def test_copilot_astra_model_priority(self):
         pinned = b.copilot_agent('security').split('---')[1].splitlines()
         self.assertIn('models: ["gpt-6.2-astra", "gpt-6-astra"]', pinned)
