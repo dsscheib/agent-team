@@ -79,6 +79,7 @@ Describe the purpose, audience, and key workflows of this repository.
 ## Agent delegation
 - Delegate bounded tasks to relevant specialists; the parent retains integration responsibility.
 - Avoid concurrent changes to overlapping files.
+- Pass explicit file paths or diffs when delegating to read-only reviewers (Antigravity CLI reviewers have `read_file` only, without search or shell tools).
 - Review the result of each delegated task before accepting it.
 '''
 
@@ -166,11 +167,14 @@ def copilot_agent(role):
 
 
 def antigravity_agent(role):
-    # Only tool names Antigravity documents; an unknown name can hang the subagent.
+    # Only tool names Antigravity maps cleanly; an unknown name can hang older builds.
     c = caps(role)
-    tools = ['view_file', 'grep_search'] + (['replace_file_content'] if c['edit'] else []) + (['run_command'] if c['run'] else [])
+    tools = (['view_file', 'grep_search']
+             + (['write_to_file', 'replace_file_content'] if c['edit'] else [])
+             + (['run_command'] if c['run'] else []))
+    exec_policy = 'sandbox' if c['run'] else 'off'
     lines = [f'model: {ROLES[role]["antigravity_model"]}', 'mainAgent: false', 'subagent: true',
-             'commandExecutionPolicy: sandbox', 'tools:'] + [f'  - {t}' for t in tools]
+             f'commandExecutionPolicy: {exec_policy}', 'tools:'] + [f'  - {t}' for t in tools]
     return frontmatter(role, lines)
 
 
@@ -206,7 +210,7 @@ ESCALATION_INTRO = '''Specialists use their configured or inherited model and ef
 - Claude Code: set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.
 - Codex: pass the listed values as the model and reasoning effort overrides when spawning the agent.
 - Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Select an explicit session model first: under Auto, every subagent runs on the session model, ignoring both overrides and the agent's own model, including a required one. Copilot does not report an unavailable override; the task silently runs on the session model. Before relying on a GPT-6.2 row, confirm the account offers that model; if it does not, use `claude-opus-5.5` at the listed effort for roles without a required model.
-- Antigravity uses the session model. Use a stronger session model for these tasks.
+- Antigravity subagents inherit the session model (`model: inherit`). For everyday work, run an Orchestrator primary (`Orchestrator (Neon)`, `Orchestrator (Carbon)`, or `Orchestrator (Argon)`). For escalated tasks, switch to a stronger frontier session model (such as Gemini 4 Neon or Carbon High), or use Swarm (`/teamwork`) when you need to pin individual roles to exact model IDs (e.g., `gemini-4-neon-high`, `gemini-4-carbon-high`, or `claude-opus-5-5-high` for auditors alongside `gemini-4-hydrogen-high` or an Orchestrator for implementers). When delegating to a read-only reviewer on Antigravity CLI, pass explicit file paths or diffs because reviewers only receive `read_file`.
 - "Default" means the role's default is already suited; a role not installed in this project does not apply.
 
 If a specialist reports that its task needs escalation, delegate it again at the listed setting rather than accepting a reduced-confidence result.'''
