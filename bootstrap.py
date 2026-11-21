@@ -101,9 +101,21 @@ def caps(role):
             effort = rule.get(f'{platform}_effort')
             if (model or (platform == 'copilot' and effort)) and effort not in EFFORTS:
                 raise ValueError(f'Role {role!r} escalation {platform}_effort must be one of {", ".join(EFFORTS)}')
-        if info['copilot_model'] and rule.get('copilot_model'):
+        if copilot_required(role) and rule.get('copilot_model'):
             raise ValueError(f'Role {role!r} has a required Copilot model and can escalate only its effort')
     return KINDS[kind]
+
+
+COPILOT_POLICIES = ('required', 'preferred')
+
+
+def copilot_required(role):
+    """True when the role pins a Copilot model that the dispatch may not replace."""
+    info = ROLES[role]
+    policy = info.get('copilot_model_policy', 'required')
+    if policy not in COPILOT_POLICIES:
+        raise ValueError(f'Role {role!r} copilot_model_policy must be one of {", ".join(COPILOT_POLICIES)}')
+    return bool(info['copilot_model']) and policy == 'required'
 
 
 def toml_string(value):
@@ -156,12 +168,12 @@ def copilot_agent(role):
     tools = ['read', 'search'] + (['edit'] if c['edit'] else []) + (['execute'] if c['run'] else [])
     lines = []
     model = ROLES[role]['copilot_model']
-    fallback_model = ROLES[role].get('copilot_fallback_model')
     if model:
-        lines += [f'model: {fallback_model or model}', 'modelPolicy: required']
-        if fallback_model:
-            # The ordered list overrides the scalar on clients that support it.
-            lines.append(f'models: {json.dumps([model, fallback_model])}')
+        # Copilot CLI 1.0.114 reads model-policy (it ignores modelPolicy and a models list). required ignores a
+        # per-call model override; preferred accepts one. Under either policy an unavailable model falls back
+        # to the session model with a warning.
+        policy = 'required' if copilot_required(role) else 'preferred'
+        lines += [f'model: {model}', f'model-policy: {policy}']
     lines += [f'tools: {json.dumps(tools)}', 'strict-tools-list: true', 'include-custom-instructions: true']
     return frontmatter(role, lines)
 
@@ -209,7 +221,7 @@ EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 ESCALATION_INTRO = '''Specialists use their configured or inherited model and effort. When a task matches a row below, delegate it at the listed setting.
 - Claude Code: set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.
 - Codex: pass the listed values as the model and reasoning effort overrides when spawning the agent.
-- Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Select an explicit session model first: under Auto, every subagent runs on the session model, ignoring both overrides and the agent's own model, including a required one. Copilot does not report an unavailable override; the task silently runs on the session model. Before relying on a GPT-6.2 row, confirm the account offers that model; if it does not, use `claude-opus-5.5` at the listed effort for roles without a required model.
+- Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Select an explicit session model first: under Auto, every subagent runs on the session model, ignoring both overrides and the agent's own model, including a required one. Copilot does not report an unavailable override; the task silently runs on the session model. The same applies to an agent's preferred model such as `mai-code-2`, and a model override on the call replaces it. Before relying on a GPT-6.2 row, confirm the account offers that model; if it does not, use `claude-opus-5.5` at the listed effort for roles without a required model.
 - Antigravity subagents inherit the session model (`model: inherit`). For everyday work, run an Orchestrator primary (`Orchestrator (Neon)`, `Orchestrator (Carbon)`, or `Orchestrator (Argon)`). For escalated tasks, switch to a stronger frontier session model (such as Gemini 4 Neon or Carbon High), or use Swarm (`/teamwork`) when you need to pin individual roles to exact model IDs (e.g., `gemini-4-neon-high`, `gemini-4-carbon-high`, or `claude-opus-5-5-high` for auditors alongside `gemini-4-hydrogen-high` or an Orchestrator for implementers). When delegating to a read-only reviewer on Antigravity CLI, pass explicit file paths or diffs because reviewers only receive `read_file`.
 - "Default" means the role's default is already suited; a role not installed in this project does not apply.
 
