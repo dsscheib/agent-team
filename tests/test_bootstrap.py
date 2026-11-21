@@ -115,14 +115,42 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('Orchestrator', b.ESCALATION_INTRO)
         self.assertIn('Swarm', b.ESCALATION_INTRO)
 
-    def test_copilot_astra_model_priority(self):
+    def test_copilot_astra_roles_pin_gpt_6_2_astra(self):
         pinned = b.copilot_agent('security').split('---')[1].splitlines()
-        self.assertIn('models: ["gpt-6.2-astra", "gpt-6-astra"]', pinned)
-        self.assertIn('model: gpt-6-astra', pinned)
-        self.assertIn('modelPolicy: required', pinned)
-        self.assertFalse(any(line.startswith('model-policy') for line in pinned))
+        self.assertIn('model: gpt-6.2-astra', pinned)
+        # Copilot CLI 1.0.114 warns "unknown field ignored" for modelPolicy and models.
+        self.assertFalse(any(line.startswith('models') for line in pinned))
+        self.assertIn('model-policy: required', pinned)
+        self.assertFalse(any(line.startswith('modelPolicy') for line in pinned))
         inherited = b.copilot_agent('backend').split('---')[1].splitlines()
         self.assertFalse(any(line.startswith('model') for line in inherited))
+
+    def test_copilot_mai_models_are_preferred_not_required(self):
+        expected = {'frontend': 'mai-code-2', 'frontend-tester': 'mai-code-2',
+                    'ux-designer': 'mai-code-2', 'documentation': 'mai-code-2-flash'}
+        self.assertEqual({r: i['copilot_model'] for r, i in b.ROLES.items() if i['copilot_model'].startswith('mai-')},
+                         expected)
+        for role, model in expected.items():
+            fm = b.copilot_agent(role).split('---')[1].splitlines()
+            self.assertIn(f'model: {model}', fm)
+            self.assertIn('model-policy: preferred', fm)
+            self.assertFalse(any(line.startswith('models:') for line in fm))
+            self.assertFalse(b.copilot_required(role))
+        # A preferred default still escalates to a stronger model on the task call.
+        self.assertTrue(b.escalation_section('software').count('| `frontend` |') == 1)
+        self.assertIn('`gpt-6.2-sol`, high |', next(line for line in b.escalation_section('software').splitlines()
+                                                    if line.startswith('| `frontend` |')))
+        saved = dict(b.ROLES['frontend'])
+        try:
+            b.ROLES['frontend']['copilot_model_policy'] = 'sometimes'
+            with self.assertRaisesRegex(ValueError, 'copilot_model_policy'):
+                b.copilot_agent('frontend')
+            del b.ROLES['frontend']['copilot_model_policy']
+            with self.assertRaisesRegex(ValueError, 'required Copilot model'):
+                b.caps('frontend')
+        finally:
+            b.ROLES['frontend'].clear()
+            b.ROLES['frontend'].update(saved)
 
     def test_frontmatter_survives_yaml_special_characters(self):
         saved = b.ROLES['backend']['description']
@@ -289,7 +317,7 @@ class BootstrapTests(unittest.TestCase):
                     row = next(line for line in table.splitlines() if line.startswith(f'| `{role}` |'))
                     model = rule.get('copilot_model')
                     effort = rule['copilot_effort']
-                    if info['copilot_model']:
+                    if b.copilot_required(role):
                         self.assertFalse(model)
                         self.assertTrue(row.endswith(f'| Agent model, {effort} |'))
                     else:
