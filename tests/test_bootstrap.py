@@ -111,8 +111,11 @@ class BootstrapTests(unittest.TestCase):
             else:
                 self.assertNotIn('write_to_file', fm, role)
                 self.assertNotIn('replace_file_content', fm, role)
+            self.assertNotIn('argon', b.antigravity_agent(role).lower(), role)
         self.assertIn('read_file', b.STARTER_AGENTS_MD)
-        self.assertIn('Orchestrator', b.ESCALATION_INTRO)
+        self.assertIn('Orchestrator (Neon)', b.ESCALATION_INTRO)
+        self.assertIn('Orchestrator (Carbon)', b.ESCALATION_INTRO)
+        self.assertNotIn('argon', b.ESCALATION_INTRO.lower())
         self.assertIn('Swarm', b.ESCALATION_INTRO)
 
     def test_copilot_astra_roles_pin_gpt_6_2_astra(self):
