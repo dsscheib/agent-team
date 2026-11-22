@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Check stock and lifecycle status of parts at Digi-Key and Mouser, and stock on hand in a Feeder
-parts inventory. Read-only: never orders and never changes Feeder.
+"""Check stock and lifecycle status of parts at Digi-Key and Mouser, and optionally stock on hand
+in a Feeder parts inventory (https://github.com/dsscheib/feeder). Read-only: never orders and
+never changes Feeder.
 
 Parts are looked up by manufacturer part number (MPN), given on the command line or read from a
 BOM CSV with an MPN column (and optionally a quantity column). A line passes when at least one
 distributor has the part Active and in stock for the needed quantity (per-board qty x --boards), or
-Feeder has that quantity available (on hand minus what its projects have reserved).
+optional Feeder has that quantity available (on hand minus what its projects have reserved).
 
 With --search KEYWORDS it instead finds candidate parts by keyword through the same Digi-Key and
 Mouser APIs (Feeder is not searched), optionally keeping only parts that are in stock (--in-stock),
@@ -14,11 +15,14 @@ Active (--active) or whose MPN, description, category or parameters contain give
 description, category, parameters, stock, lifecycle, price and datasheet, sorted by stock.
 Search results are leads, not selections: check each against its datasheet.
 
-Credentials come from the environment, or from KEY=VALUE *.env files in $DISTRIBUTOR_API_DIR
-(default ~/.config/distributor-api). Environment variables win over files.
+Credentials and optional Digi-Key locale settings come from the environment, or from KEY=VALUE
+*.env files in $DISTRIBUTOR_API_DIR (default ~/.config/distributor-api). Environment variables win
+over files.
   Digi-Key: DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET  (Product Information API v4, client credentials)
+            Optional locale headers: DIGIKEY_LOCALE_SITE (default US),
+            DIGIKEY_LOCALE_LANGUAGE (default en), DIGIKEY_LOCALE_CURRENCY (default USD)
   Mouser:   MOUSER_API_KEY                            (Search API v1)
-  Feeder:   FEEDER_URL, FEEDER_API_KEY                 (parts API v1; key from `feeder api-key create`)
+  Feeder (optional): FEEDER_URL, FEEDER_API_KEY       (parts API v1; key from `feeder api-key create`)
 A source without credentials is skipped. Secrets are never printed or written to reports.
 FEEDER_URL must be https:// unless it names this computer (localhost, 127.0.0.1, [::1]).
 
@@ -42,6 +46,8 @@ from pathlib import Path
 
 DEFAULT_CONFIG_DIR = Path.home() / '.config/distributor-api'
 SECRET_KEYS = ('DIGIKEY_CLIENT_ID', 'DIGIKEY_CLIENT_SECRET', 'MOUSER_API_KEY', 'FEEDER_URL', 'FEEDER_API_KEY')
+LOCALE_KEYS = ('DIGIKEY_LOCALE_SITE', 'DIGIKEY_LOCALE_LANGUAGE', 'DIGIKEY_LOCALE_CURRENCY')
+CONFIG_KEYS = SECRET_KEYS + LOCALE_KEYS
 MPN_COLUMNS = ('mpn', 'manufacturer part number', 'manufacturer_part_number', 'mfr part number',
                'mfr. #', 'mfr #', 'mfg part number', 'part number', 'manufacturer_pn', 'mfr_pn')
 QTY_COLUMNS = ('qty', 'quantity', 'qty per board', 'count')
@@ -59,25 +65,26 @@ DIGIKEY_ACTIVE = {'active'}
 MOUSER_ACTIVE = {'', 'new product', 'new at mouser'}
 
 REPORT_FIELDS = ('mpn', 'needed_qty', 'distributor', 'distributor_pn', 'manufacturer', 'stock',
-                 'lifecycle', 'verdict', 'unit_price_usd', 'price_break_qty', 'moq', 'datasheet',
+                 'lifecycle', 'verdict', 'unit_price', 'currency', 'price_break_qty', 'moq', 'datasheet',
                  'product_url', 'note', 'checked_at_utc')
 SEARCH_FIELDS = ('distributor', 'mpn', 'manufacturer', 'description', 'category', 'stock', 'lifecycle',
-                 'active', 'unit_price_usd', 'price_break_qty', 'moq', 'distributor_pn', 'parameters',
+                 'active', 'unit_price', 'currency', 'price_break_qty', 'moq', 'distributor_pn', 'parameters',
                  'datasheet', 'product_url', 'searched_at_utc')
+CURRENCY_SYMBOLS = {'$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY'}
 
 
 # ---------------------------------------------------------------- configuration
 
 def load_credentials(config_dir, environ=os.environ):
-    """Return the credentials found, environment first, then *.env files in config_dir."""
-    creds = {k: environ[k] for k in SECRET_KEYS if environ.get(k)}
+    """Return the credentials and locale config found, environment first, then *.env files in config_dir."""
+    creds = {k: environ[k] for k in CONFIG_KEYS if environ.get(k)}
     warnings = []
     if config_dir.is_dir():
         for path in sorted(config_dir.glob('*.env')):
             if path.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
                 warnings.append(f'{path} is readable by other users; chmod 600 it')
             for key, value in parse_env(path.read_text(encoding='utf-8')).items():
-                if key in SECRET_KEYS and value:
+                if key in CONFIG_KEYS and value:
                     creds.setdefault(key, value)
     return creds, warnings
 
@@ -196,6 +203,24 @@ def to_price(value):
     return float(m.group().replace(',', '')) if m else None
 
 
+def infer_currency(value):
+    if value is None:
+        return ''
+    text = str(value).strip()
+    for sym, code in CURRENCY_SYMBOLS.items():
+        if sym in text:
+            return code
+    return ''
+
+
+def format_price(price, currency):
+    if price == '':
+        return ''
+    if not currency or currency == 'USD':
+        return f' ${price}'
+    return f' {currency} {price}'
+
+
 def price_at(breaks, qty):
     """breaks: [(break_qty, unit_price)]. Return the break that applies to qty, or the smallest."""
     breaks = sorted(b for b in breaks if b[0] and b[1] is not None)
@@ -249,8 +274,11 @@ def keep_search_row(row, in_stock=False, active=False, require=()):
 class DigiKey:
     name = 'Digi-Key'
 
-    def __init__(self, client_id, client_secret):
+    def __init__(self, client_id, client_secret, site='US', language='en', currency='USD'):
         self.client_id, self.client_secret = client_id, client_secret
+        self.site = site or 'US'
+        self.language = language or 'en'
+        self.currency = currency or 'USD'
         self.token, self.expires = None, 0.0
         self.throttle = Throttle(0.6)
 
@@ -261,22 +289,22 @@ class DigiKey:
             self.token = data['access_token']
             self.expires = time.monotonic() + float(data.get('expires_in', 600))
         return {'Authorization': f'Bearer {self.token}', 'X-DIGIKEY-Client-Id': self.client_id,
-                'X-DIGIKEY-Locale-Site': 'US', 'X-DIGIKEY-Locale-Language': 'en',
-                'X-DIGIKEY-Locale-Currency': 'USD'}
+                'X-DIGIKEY-Locale-Site': self.site, 'X-DIGIKEY-Locale-Language': self.language,
+                'X-DIGIKEY-Locale-Currency': self.currency}
 
     def lookup(self, mpn, needed):
         self.throttle.wait()
         data = http_json(DIGIKEY_SEARCH_URL, {'Keywords': mpn, 'Limit': 10, 'Offset': 0}, self.headers())
-        return parse_digikey(data, mpn, needed)
+        return parse_digikey(data, mpn, needed, currency=self.currency)
 
     def search(self, keywords, limit, in_stock):
         # Stock and lifecycle filters run locally on the results, the same way for both distributors.
         self.throttle.wait()
         data = http_json(DIGIKEY_SEARCH_URL, {'Keywords': keywords, 'Limit': limit, 'Offset': 0}, self.headers())
-        return parse_digikey_search(data)
+        return parse_digikey_search(data, currency=self.currency)
 
 
-def parse_digikey(data, mpn, needed):
+def parse_digikey(data, mpn, needed, currency='USD'):
     # ExactMatches usually repeats entries from Products; key each product by MPN and manufacturer.
     unique = {}
     for p in (data.get('ExactMatches') or []) + (data.get('Products') or []):
@@ -290,7 +318,7 @@ def parse_digikey(data, mpn, needed):
                       note=('near matches: ' + ', '.join(near[:5])) if near else 'no results')
     # Several manufacturers can share an MPN; report the one with the most stock.
     p = max(exact, key=lambda x: to_int(x.get('QuantityAvailable')) or 0)
-    offer = digikey_offer(p, needed)
+    offer = digikey_offer(p, needed, currency=currency)
     note = []
     if len(exact) > 1:
         note.append(f'{len(exact)} manufacturers share this MPN')
@@ -300,12 +328,13 @@ def parse_digikey(data, mpn, needed):
                   distributor_pn=offer['distributor_pn'], manufacturer=offer['manufacturer'],
                   stock=offer['stock'], lifecycle=offer['lifecycle'],
                   verdict=verdict(True, offer['active'], offer['stock'], needed),
-                  unit_price_usd=offer['unit_price_usd'], price_break_qty=offer['price_break_qty'],
+                  unit_price=offer['unit_price'], currency=offer['currency'],
+                  price_break_qty=offer['price_break_qty'],
                   moq=offer['moq'], datasheet=p.get('DatasheetUrl'), product_url=p.get('ProductUrl'),
                   note='; '.join(note))
 
 
-def digikey_offer(p, needed):
+def digikey_offer(p, needed, currency='USD'):
     """Lifecycle, stock and the package and price that apply to `needed` for one Digi-Key product."""
     lifecycle = ((p.get('ProductStatus') or {}).get('Status') or '').strip()
     active = lifecycle.lower() in DIGIKEY_ACTIVE and not p.get('Discontinued') and not p.get('EndOfLife')
@@ -320,7 +349,8 @@ def digikey_offer(p, needed):
     return {'manufacturer': (p.get('Manufacturer') or {}).get('Name'), 'lifecycle': lifecycle or 'unknown',
             'active': active, 'stock': to_int(p.get('QuantityAvailable')) or 0,
             'distributor_pn': var.get('DigiKeyProductNumber'), 'package': (var.get('PackageType') or {}).get('Name'),
-            'unit_price_usd': unit, 'price_break_qty': break_qty, 'moq': to_int(var.get('MinimumOrderQuantity'))}
+            'unit_price': unit, 'currency': currency if unit is not None else '',
+            'price_break_qty': break_qty, 'moq': to_int(var.get('MinimumOrderQuantity'))}
 
 
 def digikey_category(p):
@@ -333,14 +363,14 @@ def digikey_category(p):
     return name
 
 
-def parse_digikey_search(data):
+def parse_digikey_search(data, currency='USD'):
     unique = {}
     for p in (data.get('ExactMatches') or []) + (data.get('Products') or []):
         key = ((p.get('ManufacturerProductNumber') or '').upper(), (p.get('Manufacturer') or {}).get('Name'))
         unique.setdefault(key, p)
     rows = []
     for p in unique.values():
-        offer = digikey_offer(p, 1)
+        offer = digikey_offer(p, 1, currency=currency)
         description = p.get('Description') or {}
         rows.append(search_result(
             'Digi-Key', p.get('ManufacturerProductNumber'), offer,
@@ -397,7 +427,8 @@ def parse_mouser(data, mpn, needed):
                   distributor_pn=offer['distributor_pn'], manufacturer=offer['manufacturer'],
                   stock=offer['stock'], lifecycle=offer['lifecycle'],
                   verdict=verdict(True, offer['active'], offer['stock'], needed),
-                  unit_price_usd=offer['unit_price_usd'], price_break_qty=offer['price_break_qty'],
+                  unit_price=offer['unit_price'], currency=offer['currency'],
+                  price_break_qty=offer['price_break_qty'],
                   moq=offer['moq'], datasheet=p.get('DataSheetUrl'), product_url=p.get('ProductDetailUrl'),
                   note='; '.join(note))
 
@@ -410,13 +441,20 @@ def mouser_offer(p, needed):
     if stock is None:
         avail = p.get('Availability') or ''
         stock = to_int(avail) if 'in stock' in avail.lower() else 0
-    breaks = [(to_int(b.get('Quantity')), to_price(b.get('Price'))) for b in p.get('PriceBreaks') or []]
+    raw_breaks = p.get('PriceBreaks') or []
+    breaks = [(to_int(b.get('Quantity')), to_price(b.get('Price'))) for b in raw_breaks]
     break_qty, unit = price_at(breaks, needed)
+    currency = ''
+    if unit is not None:
+        currency = next((infer_currency(b.get('Price')) for b in raw_breaks
+                         if to_int(b.get('Quantity')) == break_qty and infer_currency(b.get('Price'))), '')
+        if not currency:
+            currency = next((infer_currency(b.get('Price')) for b in raw_breaks if infer_currency(b.get('Price'))), '')
     return {'manufacturer': p.get('Manufacturer'),
             'lifecycle': lifecycle or ('Discontinued' if discontinued else 'Active'),
             'active': lifecycle.lower() in MOUSER_ACTIVE and not discontinued, 'stock': stock,
-            'distributor_pn': p.get('MouserPartNumber'), 'unit_price_usd': unit, 'price_break_qty': break_qty,
-            'moq': to_int(p.get('Min'))}
+            'distributor_pn': p.get('MouserPartNumber'), 'unit_price': unit, 'currency': currency,
+            'price_break_qty': break_qty, 'moq': to_int(p.get('Min'))}
 
 
 def parse_mouser_search(data):
@@ -449,7 +487,8 @@ def feeder_base_url(url):
 
 
 class Feeder:
-    """The owner's own parts inventory: what is on hand, reserved and where it is stored."""
+    """Optional personal parts inventory (https://github.com/dsscheib/feeder): on-hand stock,
+    reservations, and storage locations."""
     name = 'Feeder'
 
     def __init__(self, url, api_key):
@@ -483,8 +522,8 @@ def parse_feeder(data, mpn, needed):
     return result(mpn, needed, 'Feeder',
                   distributor_pn=', '.join(f'part {p.get("PartId")}' for p in products),
                   manufacturer=best.get('Manufacturer'), stock=available, lifecycle='on hand',
-                  verdict=verdict(True, True, available, needed), unit_price_usd=best.get('UnitPrice'),
-                  price_break_qty='', moq='', datasheet=best.get('DatasheetUrl'),
+                  verdict=verdict(True, True, available, needed), unit_price=best.get('UnitPrice'),
+                  currency='', price_break_qty='', moq='', datasheet=best.get('DatasheetUrl'),
                   product_url=best.get('ProductUrl'), note='; '.join(note))
 
 
@@ -583,18 +622,25 @@ def main(argv=None):
     for w in warnings:
         print('WARNING:', w, file=sys.stderr)
     distributors = []
+    has_feeder_cfg = bool(creds.get('FEEDER_URL') or creds.get('FEEDER_API_KEY'))
     if searching:
-        print('Feeder: not used for --search (it holds parts you already have)', file=sys.stderr)
+        if has_feeder_cfg:
+            print('Feeder: not used for --search (it holds parts you already have)', file=sys.stderr)
     elif creds.get('FEEDER_URL') and creds.get('FEEDER_API_KEY'):
         try:
             distributors.append(Feeder(creds['FEEDER_URL'], creds['FEEDER_API_KEY']))
         except ValueError as e:
             print(f'ERROR: {e}', file=sys.stderr)
             return 2
-    else:
-        print('Feeder: skipped (FEEDER_URL / FEEDER_API_KEY not set)', file=sys.stderr)
+    elif has_feeder_cfg:
+        print('Feeder: skipped (both FEEDER_URL and FEEDER_API_KEY are required)', file=sys.stderr)
     if creds.get('DIGIKEY_CLIENT_ID') and creds.get('DIGIKEY_CLIENT_SECRET'):
-        distributors.append(DigiKey(creds['DIGIKEY_CLIENT_ID'], creds['DIGIKEY_CLIENT_SECRET']))
+        distributors.append(DigiKey(
+            creds['DIGIKEY_CLIENT_ID'], creds['DIGIKEY_CLIENT_SECRET'],
+            site=creds.get('DIGIKEY_LOCALE_SITE', 'US'),
+            language=creds.get('DIGIKEY_LOCALE_LANGUAGE', 'en'),
+            currency=creds.get('DIGIKEY_LOCALE_CURRENCY', 'USD'),
+        ))
     else:
         print('Digi-Key: skipped (DIGIKEY_CLIENT_ID / DIGIKEY_CLIENT_SECRET not set)', file=sys.stderr)
     if creds.get('MOUSER_API_KEY'):
@@ -602,7 +648,7 @@ def main(argv=None):
     else:
         print('Mouser: skipped (MOUSER_API_KEY not set)', file=sys.stderr)
     if not distributors:
-        what = 'distributor' if searching else 'Feeder or distributor'
+        what = 'distributor' if searching else 'distributor (or optional Feeder)'
         print(f'ERROR: no {what} credentials in the environment or {config_dir}. '
               'Check the distributor sites manually.', file=sys.stderr)
         return 2
@@ -617,7 +663,7 @@ def main(argv=None):
         report = write_report(out_dir, 'search', SEARCH_FIELDS, rows, now)
         print(f'Searched "{args.search.strip()}" at {stamp}: {len(rows)} part(s) kept')
         for row in rows:
-            price = f' ${row["unit_price_usd"]}' if row['unit_price_usd'] != '' else ''
+            price = format_price(row['unit_price'], row['currency'])
             print(f'  {row["distributor"]:9} {row["mpn"]:28} {str(row["manufacturer"])[:20]:20} '
                   f'stock={row["stock"]!s:>7} {row["lifecycle"]}{price}  {str(row["description"])[:70]}')
         for e in errors:
@@ -632,16 +678,23 @@ def main(argv=None):
 
     print(f'Checked {len(lines)} part(s) x {args.boards} board(s) at {stamp}')
     for row in rows:
-        price = ''
-        if row['unit_price_usd'] != '':
-            price = f' ${row["unit_price_usd"]}' + (f'@{row["price_break_qty"]}' if row['price_break_qty'] != '' else '')
+        price = format_price(row['unit_price'], row['currency'])
+        if price and row['price_break_qty'] != '':
+            price += f'@{row["price_break_qty"]}'
         print(f'  {row["verdict"]:12} {row["mpn"]:24} {row["distributor"]:9} stock={row["stock"]!s:>7} '
               f'need={row["needed_qty"]} {row["lifecycle"]}{price}{"  (" + row["note"] + ")" if row["note"] else ""}')
     print('Report:', report)
+    has_feeder = any(isinstance(d, Feeder) for d in distributors)
     if failures:
-        print(f'FAIL: neither Feeder has these available nor a distributor Active and in stock: {", ".join(failures)}')
+        if has_feeder:
+            print(f'FAIL: neither Feeder has these available nor a distributor Active and in stock: {", ".join(failures)}')
+        else:
+            print(f'FAIL: no distributor has these Active and in stock: {", ".join(failures)}')
         return 1
-    print('PASS: every part is available in Feeder or Active and in stock at one or more distributors')
+    if has_feeder:
+        print('PASS: every part is available in Feeder or Active and in stock at one or more distributors')
+    else:
+        print('PASS: every part is Active and in stock at one or more distributors')
     return 0
 
 

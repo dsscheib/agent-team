@@ -403,8 +403,11 @@ class BootstrapTests(unittest.TestCase):
             report = Path(td)/'r.json'
             report.write_text(json.dumps({'shapes': [{'object': 'Pad', 'envelope_mm': [250, 60, 3]}]}))
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(check.main([str(report)]), 0)  # fits when rotated onto Z
+                self.assertEqual(check.main([str(report), '--volume', '220', '220', '270']), 0)  # fits when rotated onto Z
                 self.assertEqual(check.main([str(report), '--volume', '200', '200', '200']), 2)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                check.main([str(report)])
+            self.assertEqual(cm.exception.code, 2)
 
     def test_availability_credentials_env_wins_and_files_fill_gaps(self):
         avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
@@ -444,8 +447,8 @@ class BootstrapTests(unittest.TestCase):
                      'QuantityAvailableforPackageType': 1366,
                      'StandardPricing': [{'BreakQuantity': 1, 'UnitPrice': 0.78}, {'BreakQuantity': 10, 'UnitPrice': 0.6}]}]}
         row = avail.parse_digikey({'ExactMatches': [prod], 'Products': [prod]}, 'sn74hc00n', 12)
-        self.assertEqual((row['verdict'], row['distributor_pn'], row['unit_price_usd'], row['price_break_qty']),
-                         ('OK', '296-1563-5-ND', 0.6, 10))
+        self.assertEqual((row['verdict'], row['distributor_pn'], row['unit_price'], row['currency'], row['price_break_qty']),
+                         ('OK', '296-1563-5-ND', 0.6, 'USD', 10))
         self.assertNotIn('share', row['note'])
         self.assertEqual(avail.parse_digikey({'Products': [prod]}, 'SN74HC00N', 2000)['verdict'], 'OK')
         self.assertEqual(avail.parse_digikey({'Products': [prod]}, 'SN74HC00N', 20000)['verdict'], 'LOW_STOCK')
@@ -458,7 +461,8 @@ class BootstrapTests(unittest.TestCase):
                 'LifecycleStatus': None, 'Min': '1',
                 'PriceBreaks': [{'Quantity': 1, 'Price': '$11.04'}, {'Quantity': 25, 'Price': '$9.50'}]}
         row = avail.parse_mouser({'Errors': [], 'SearchResults': {'Parts': [part]}}, 'W65C02S6TPG-14', 1)
-        self.assertEqual((row['verdict'], row['stock'], row['lifecycle'], row['unit_price_usd']), ('OK', 750, 'Active', 11.04))
+        self.assertEqual((row['verdict'], row['stock'], row['lifecycle'], row['unit_price'], row['currency']),
+                         ('OK', 750, 'Active', 11.04, 'USD'))
         nrnd = dict(part, LifecycleStatus='Not Recommended for New Designs')
         self.assertEqual(avail.parse_mouser({'SearchResults': {'Parts': [nrnd]}}, 'W65C02S6TPG-14', 1)['verdict'], 'NOT_ACTIVE')
         gone = dict(part, AvailabilityInStock=None, Availability='On Order')
@@ -474,9 +478,9 @@ class BootstrapTests(unittest.TestCase):
                 'ProductUrl': 'https://feeder.example/parts/5'}
         data = {'Results': [{'PartNumber': 'rc0805fr-0710kl', 'Products': [prod]}]}
         row = avail.parse_feeder(data, 'rc0805fr-0710kl', 40)
-        self.assertEqual((row['verdict'], row['stock'], row['distributor'], row['distributor_pn'], row['unit_price_usd'],
-                          row['lifecycle'], row['product_url']),
-                         ('OK', 46, 'Feeder', 'part 5', 0.05, 'on hand', 'https://feeder.example/parts/5'))
+        self.assertEqual((row['verdict'], row['stock'], row['distributor'], row['distributor_pn'], row['unit_price'],
+                          row['currency'], row['lifecycle'], row['product_url']),
+                         ('OK', 46, 'Feeder', 'part 5', 0.05, '', 'on hand', 'https://feeder.example/parts/5'))
         self.assertIn('Cabinet 1 › Bin A-01 (Front): 46', row['note'])
         self.assertIn('4 more reserved', row['note'])
         self.assertEqual(avail.parse_feeder(data, 'X', 47)['verdict'], 'LOW_STOCK')
@@ -549,8 +553,9 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)  # ExactMatches repeats Products
         row = rows[0]
         self.assertEqual((row['distributor'], row['mpn'], row['category'], row['stock'], row['active'],
-                          row['distributor_pn'], row['unit_price_usd'], row['description']),
-                         ('Digi-Key', 'LDD-700L', 'LED Drivers', 133, True, '1866-LDD-700L-ND', 9.5, 'LED Driver IC 700mA'))
+                          row['distributor_pn'], row['unit_price'], row['currency'], row['description']),
+                         ('Digi-Key', 'LDD-700L', 'LED Drivers', 133, True, '1866-LDD-700L-ND', 9.5, 'USD',
+                          'LED Driver IC 700mA'))
         self.assertEqual(row['parameters'], 'Current - Output: 700mA; Dimming: PWM')
         self.assertEqual(set(row), set(avail.SEARCH_FIELDS))
 
@@ -560,9 +565,9 @@ class BootstrapTests(unittest.TestCase):
                 'PriceBreaks': [{'Quantity': 1, 'Price': '$7.20'}],
                 'ProductAttributes': [{'AttributeName': 'Output Voltage', 'AttributeValue': '3.3 V'}]}
         row = avail.parse_mouser_search({'Errors': [], 'SearchResults': {'Parts': [part]}})[0]
-        self.assertEqual((row['distributor'], row['stock'], row['lifecycle'], row['active'], row['unit_price_usd'],
-                          row['parameters']),
-                         ('Mouser', 1396, 'Active', True, 7.2, 'Output Voltage: 3.3 V'))
+        self.assertEqual((row['distributor'], row['stock'], row['lifecycle'], row['active'], row['unit_price'],
+                          row['currency'], row['parameters']),
+                         ('Mouser', 1396, 'Active', True, 7.2, 'USD', 'Output Voltage: 3.3 V'))
         self.assertEqual(avail.parse_mouser_search({'SearchResults': {'Parts': []}}), [])
         with self.assertRaises(LookupError):
             avail.parse_mouser_search({'Errors': [{'Message': 'Invalid key'}]})
@@ -605,9 +610,14 @@ class BootstrapTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as cm:
                     avail.main(argv + ['--config-dir', td, '--output', td])
                 self.assertEqual(cm.exception.code, 2, argv)
-        saved = {k: os.environ.pop(k) for k in avail.SECRET_KEYS if k in os.environ}
+        saved = {k: os.environ.pop(k) for k in avail.CONFIG_KEYS if k in os.environ}
         try:
             with tempfile.TemporaryDirectory() as td:
+                (Path(td)/'mouser.env').write_text('MOUSER_API_KEY=\n')
+                (Path(td)/'mouser.env').chmod(0o600)
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(avail.main(['X', '--config-dir', td, '--output', td]), 2)
+                self.assertNotIn('Feeder:', err.getvalue())
                 (Path(td)/'feeder.env').write_text('FEEDER_URL=https://feeder.example\nFEEDER_API_KEY=feeder_fake\n')
                 (Path(td)/'feeder.env').chmod(0o600)
                 # Feeder alone cannot search, so a search with only Feeder configured is a configuration error.
@@ -617,6 +627,37 @@ class BootstrapTests(unittest.TestCase):
                 self.assertNotIn('feeder_fake', err.getvalue())
         finally:
             os.environ.update(saved)
+
+    def test_availability_digikey_locale_defaults_and_overrides(self):
+        avail = load(ROOT/'domains/kicad/files/tools/kicad/check_availability.py')
+        dk_default = avail.DigiKey('id', 'secret')
+        dk_default.token, dk_default.expires = 'tok', float('inf')
+        h_default = dk_default.headers()
+        self.assertEqual((h_default['X-DIGIKEY-Locale-Site'], h_default['X-DIGIKEY-Locale-Language'],
+                          h_default['X-DIGIKEY-Locale-Currency']), ('US', 'en', 'USD'))
+
+        dk_de = avail.DigiKey('id', 'secret', site='DE', language='de', currency='EUR')
+        dk_de.token, dk_de.expires = 'tok', float('inf')
+        h_de = dk_de.headers()
+        self.assertEqual((h_de['X-DIGIKEY-Locale-Site'], h_de['X-DIGIKEY-Locale-Language'],
+                          h_de['X-DIGIKEY-Locale-Currency']), ('DE', 'de', 'EUR'))
+
+        prod = {'ManufacturerProductNumber': 'R1', 'Manufacturer': {'Name': 'Yageo'},
+                'QuantityAvailable': 10, 'ProductStatus': {'Status': 'Active'},
+                'ProductVariations': [{'DigiKeyProductNumber': 'DK1', 'MinimumOrderQuantity': 1,
+                                       'QuantityAvailableforPackageType': 10,
+                                       'StandardPricing': [{'BreakQuantity': 1, 'UnitPrice': 0.12}]}]}
+        row = avail.parse_digikey({'Products': [prod]}, 'R1', 1, currency='EUR')
+        self.assertEqual((row['unit_price'], row['currency']), (0.12, 'EUR'))
+
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d/'digikey.env').write_text('DIGIKEY_LOCALE_SITE=UK\nDIGIKEY_LOCALE_CURRENCY=GBP\n')
+            (d/'digikey.env').chmod(0o600)
+            creds, warnings = avail.load_credentials(d, {'DIGIKEY_LOCALE_SITE': 'DE', 'DIGIKEY_LOCALE_LANGUAGE': 'de'})
+            self.assertEqual(warnings, [])
+            self.assertEqual(creds, {'DIGIKEY_LOCALE_SITE': 'DE', 'DIGIKEY_LOCALE_LANGUAGE': 'de',
+                                     'DIGIKEY_LOCALE_CURRENCY': 'GBP'})
 
     @staticmethod
     def layout_board(numbered):
@@ -676,6 +717,12 @@ class BootstrapTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(lm.main([str(board), '--loop', 'C1.1,C1.9,U1.1']), 2)
             self.assertIn('C1 has no pad', err.getvalue())
+
+    def test_fabrication_export_rejects_missing_board(self):
+        fab = load(ROOT/'domains/kicad/files/tools/kicad/fabrication_export.py')
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(fab.main(['nonexistent.kicad_pcb']), 2)
+        self.assertIn('ERROR:', err.getvalue())
 
     def test_domain_scripts_compile(self):
         for script in (ROOT/'domains').rglob('*.py'):

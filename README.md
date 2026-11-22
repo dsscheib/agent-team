@@ -4,9 +4,10 @@ A **stack-neutral, opt-in** installer for project-local subagents in **Codex CLI
 
 ## Quick start
 
-From this repository:
+Clone and run from this repository:
 
 ```bash
+git clone https://github.com/dsscheib/agent-team.git && cd agent-team
 python3 bootstrap.py --list
 python3 bootstrap.py --project ~/Projects/my-project --platforms codex --preset core
 python3 bootstrap.py --project ~/Projects/my-project --platforms codex --preset core --with-agents-md --apply
@@ -54,8 +55,8 @@ To generate initial project instructions, use `--with-agents-md` and edit the re
 
 | Domain | Installed files |
 |---|---|
-| KiCad | `tools/kicad/doctor.py` (environment check), `tools/kicad/verify.py` (ERC on each root schematic named by a `.kicad_pro`, DRC with schematic parity; reports in `reports/kicad/`), `tools/kicad/fabrication_export.py` (Gerbers and drills to `reports/fab-staging/`, never orders), `tools/kicad/layout_metrics.py` (reads a saved `.kicad_pcb` without KiCad running: outline and courtyard extent, track length and vias, and for named nets length, layers, reference-plane coverage, pair skew, decoupling distances and loop areas; report in `reports/kicad/`), `tools/kicad/check_availability.py` (stock and lifecycle by MPN or BOM CSV through the Digi-Key and Mouser APIs, or with `--search KEYWORDS` a keyword search for candidate parts at both, filtered by `--in-stock`, `--active` and `--require TEXT`, report `search-*.csv`; and stock on hand in a Feeder inventory through its read-only parts API (`FEEDER_URL`, `FEEDER_API_KEY`), report in `reports/kicad/`; credentials from the environment or `*.env` files in `$DISTRIBUTOR_API_DIR`, default `~/.config/distributor-api`), `docs/electronics/design-requirements.md`, `docs/electronics/release-checklist.md` |
-| FreeCAD | `tools/freecad/doctor.py` (finds FreeCAD/OrcaSlicer on PATH or as Flatpaks), `tools/freecad/inspect_model.py` (run with `FreeCADCmd`; shape validity, solids, volume, envelope to `reports/`), `tools/freecad/check_build_volume.py` (`--volume X Y Z`, default Ender-3 S1 Pro 220 x 220 x 270 mm), `scripts/create_parametric_plate.py` (example sketch + pad with STEP/STL export), `docs/mechanical/design-requirements.md`, `docs/mechanical/slicing.md` |
+| KiCad | `tools/kicad/doctor.py` (environment check), `tools/kicad/verify.py` (ERC on each root schematic named by a `.kicad_pro`, DRC with schematic parity; reports in `reports/kicad/`), `tools/kicad/fabrication_export.py` (Gerbers and drills to `reports/fab-staging/`, never orders), `tools/kicad/layout_metrics.py` (reads a saved `.kicad_pcb` without KiCad running: outline and courtyard extent, track length and vias, and for named nets length, layers, reference-plane coverage, pair skew, decoupling distances and loop areas; report in `reports/kicad/`), `tools/kicad/check_availability.py` (stock and lifecycle by MPN or BOM CSV through the Digi-Key and Mouser APIs, or with `--search KEYWORDS` a keyword search for candidate parts at both, filtered by `--in-stock`, `--active` and `--require TEXT`, report `search-*.csv`; and optionally stock on hand in a [Feeder](https://github.com/dsscheib/feeder) inventory through its read-only parts API (`FEEDER_URL`, `FEEDER_API_KEY`), report in `reports/kicad/`; credentials and optional Digi-Key locale/currency overrides (`DIGIKEY_LOCALE_SITE`, `DIGIKEY_LOCALE_LANGUAGE`, `DIGIKEY_LOCALE_CURRENCY`, defaulting to `US`/`en`/`USD`) come from the environment or `*.env` files in `$DISTRIBUTOR_API_DIR`, default `~/.config/distributor-api`), `docs/electronics/design-requirements.md`, `docs/electronics/release-checklist.md` |
+| FreeCAD | `tools/freecad/doctor.py` (finds FreeCAD/OrcaSlicer on PATH or as Flatpaks), `tools/freecad/inspect_model.py` (run with `FreeCADCmd`; shape validity, solids, volume, envelope to `reports/`), `tools/freecad/check_build_volume.py` (requires `--volume X Y Z` in mm), `scripts/create_parametric_plate.py` (example sketch + pad with STEP/STL export), `docs/mechanical/design-requirements.md`, `docs/mechanical/slicing.md` |
 
 Kit files follow the same rules as agent files: created only when absent, identical files left alone, conflicts stop the install unless `--skip-existing`. The tools write generated reports under `reports/`, so `--with-tools` also adds `reports/`, plus KiCad's per-user and cache files (`*.kicad_prl`, `*.lck`, `fp-info-cache`, `*-backups/`), to `.gitignore` (creating it, or appending if the entry is missing) to keep check runs from dirtying the tree.
 
@@ -63,7 +64,7 @@ Kit files follow the same rules as agent files: created only when absent, identi
 - With the FreeCAD Flatpak, run scripts as `flatpak run --command=FreeCADCmd org.freecad.FreeCAD SCRIPT.py ARGS`, from inside the project: the sandbox has its own `/tmp`.
 - No kit sends G-code, controls a printer, flashes firmware or places fabrication orders.
 
-Tested 2026-11-13 with KiCad 10.0.8 (the `complex_hierarchy` demo) and the FreeCAD 1.1.4 Flatpak (example plate, inspection and build-volume check).
+Tested 2026-11-13 with KiCad 10.0.8 (the `complex_hierarchy` demo) and the FreeCAD 1.1.4 Flatpak (example plate, inspection and build-volume check). See [docs/pcb-layout-model-test.md](docs/pcb-layout-model-test.md) for an optional evaluation protocol for benchmarking PCB layout models with `layout_metrics.py`.
 
 ## Installation semantics
 
@@ -156,7 +157,7 @@ Generated agent files have one fixed model and effort. The upward overrides belo
 
 Keep component engineering and electrical verification on Sol High: their responsibilities include pinouts, footprints, ratings and engineering validation beyond automated rule checks. Backend, database, performance, firmware, CAD and assembly implementation also retain Sol High. Frontend testing and documentation retain Terra Medium.
 
-Higher effort takes more time and tokens; validate these choices on representative tasks and adjust based on observed results. See the [official model and reasoning-effort guidance](https://learn.chatgpt.com/docs/models). Model availability is client/account dependent: the local CLI 0.162.1 model listing checked on 2026-11-16 omitted Terra, although the official guide supports explicit Terra selection on CLI 0.159.0+. Confirm it works in your target session before relying on Terra roles.
+Higher effort takes more time and tokens; validate these choices on representative tasks and adjust based on observed results. See the [official model and reasoning-effort guidance](https://learn.chatgpt.com/docs/models). Model availability is client- and account-dependent (explicit Terra selection requires Codex CLI 0.159.0+ and account access). Confirm available models in your target session with `codex debug models` before relying on Terra roles.
 
 ### Claude Code primary agent
 
@@ -251,22 +252,28 @@ Codex loads project agents from `.codex/agents/` only after you trust the projec
 
 Check the models available to your Codex client with `codex debug models`. To use the parent session's model for a role, set its `codex_model` to an empty string in the catalog before generating the agent.
 
-For an existing installation, update the `model` values in `.codex/agents/*.toml` and the Codex entries in the model escalation tables in `AGENTS.md`, if present. Replace `gpt-6.1-sol` with `gpt-6.2-sol` and `gpt-6-astra` with `gpt-6.2-astra`.
-
-### Copilot model migration
-
-For existing Copilot agents in `.github/agents/*.agent.md` that pin Astra, set `model: gpt-6.2-astra` and delete any `models:` line. Copilot CLI 1.0.114 ignores `models:` with an `unknown field ignored` warning, so those agents ran on `gpt-6-astra`. Copilot CLI reads the policy as `model-policy`. Agents generated by the previous version wrote `modelPolicy: required`, which Copilot CLI 1.0.114 ignores with the warning `unknown field ignored: modelPolicy`, so those agents ran under the default `preferred` policy. Rename the key to `model-policy: required`. Copilot rejects values other than `required` and `preferred`.
-
-To adopt the MAI defaults in an existing installation, add `model: mai-code-2` and `model-policy: preferred` to `.github/agents/frontend.agent.md`, `frontend-tester.agent.md` and `ux-designer.agent.md`, and add `model: mai-code-2-flash` and `model-policy: preferred` to `documentation.agent.md`.
-
-To refresh existing escalation guidance, use the same presets with `--with-agents-md --apply` in a temporary project, then merge the updated escalation sections from its `AGENTS.md` into your project's copy.
-
 ## Customization
 
-Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules, and `catalog/role_details.json` to change responsibilities. Each escalation rule defines `when` and can set `codex_model`/`codex_effort`, `claude_model`/`claude_effort` or `copilot_model`/`copilot_effort`. `copilot_model` is required by default; add `"copilot_model_policy": "preferred"` so the role falls back to the session model and its escalation rule can set `copilot_model`. For a required Copilot model, set only `copilot_effort` in the escalation rule. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer and tool facts live in the kit's `AGENTS.md` section, not in the agents, so edit that section for a different printer. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
+Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules, and `catalog/role_details.json` to change responsibilities. Each escalation rule defines `when` and can set `codex_model`/`codex_effort`, `claude_model`/`claude_effort` or `copilot_model`/`copilot_effort`. `copilot_model` is required by default; add `"copilot_model_policy": "preferred"` so the role falls back to the session model and its escalation rule can set `copilot_model`. For a required Copilot model, set only `copilot_effort` in the escalation rule. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer, OS, sourcing, and tool facts live in the kit's `AGENTS.md` section and `docs/` templates, not in the agents, so fill those in for your environment. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
+
+### Updating existing installations
+
+To refresh `AGENTS.md` escalation sections in an existing project after updating this repository, run the same presets with `--with-agents-md --apply` in a temporary directory, then merge the updated escalation sections from its `AGENTS.md` into your project's copy.
 
 Documentation references (agent file fields and tool names for Codex, Copilot CLI and Antigravity checked 2026-11-13):
 - https://learn.chatgpt.com/docs/agent-configuration/subagents
 - https://code.claude.com/docs/en/sub-agents
 - https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli
 - https://antigravity.google/docs/subagents
+
+## Running tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Requires Python 3.11+ (stdlib only, no third-party dependencies).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

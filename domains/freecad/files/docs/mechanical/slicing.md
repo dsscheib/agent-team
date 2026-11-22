@@ -1,6 +1,6 @@
-# OrcaSlicer and Ender-3 S1 Pro workflow
+# FDM slicing workflow (OrcaSlicer example)
 
-1. Install OrcaSlicer from the official release or Flathub and configure your exact printer profile.
+1. Install OrcaSlicer (or your chosen slicer) from the official release or Flathub and configure your exact printer profile.
 2. Inspect firmware type, bed dimensions, nozzle diameter, start/end G-code, temperatures, and material profile.
 3. Import exported STL and confirm the units are millimeters and orientation is correct.
 4. Review supports, first-layer adhesion, wall count, minimum features, seam, time/material estimates.

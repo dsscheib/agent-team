@@ -2,7 +2,7 @@
 """Compare bounding boxes from an inspect_model.py report with a printer's nominal build volume.
 
 Checks axis-aligned dimensions only: not placement, brim, skirt, supports or printer offsets.
-The default volume is a Creality Ender-3 S1 Pro (220 x 220 x 270 mm); pass --volume for another printer.
+Pass the printer's nominal build volume with --volume X Y Z (in mm).
 """
 import argparse
 import itertools
@@ -20,8 +20,8 @@ def main(argv=None):
     p.add_argument('report', type=Path, help='reports/PART-geometry.json from inspect_model.py')
     p.add_argument('--object', help='Feature name to check; recommended for multi-object documents')
     p.add_argument('--margin', type=float, default=5, help='Reserve per side, mm')
-    p.add_argument('--volume', type=float, nargs=3, default=[220, 220, 270], metavar=('X', 'Y', 'Z'),
-                   help='Nominal build volume, mm')
+    p.add_argument('--volume', type=float, nargs=3, required=True, metavar=('X', 'Y', 'Z'),
+                   help='Printer nominal build volume in mm (X Y Z)')
     a = p.parse_args(argv)
     d = json.loads(a.report.read_text())
     items = [x for x in d['shapes'] if x['object'] == a.object] if a.object else d['shapes']

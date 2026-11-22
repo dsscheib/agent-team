@@ -15,10 +15,10 @@ Describe the part, surrounding parts, and expected service conditions.
 - Environmental conditions and temperature: TBD
 
 ## Printer and process
-- Printer: Creality Ender-3 S1 Pro
-- Nominal build area: 220 x 220 x 270 mm
-- Nozzle: 0.4 mm default; confirm on printer
-- Slicer: OrcaSlicer; profile selection must be verified
+- Printer: TBD
+- Nominal build area: TBD (X x Y x Z mm)
+- Nozzle: TBD (commonly 0.4 mm; confirm on printer)
+- Slicer: TBD (e.g., OrcaSlicer; profile selection must be verified)
 - Target finish, accuracy, and infill: TBD
 
 ## Acceptance tests
