@@ -113,10 +113,11 @@ class BootstrapTests(unittest.TestCase):
                 self.assertNotIn('replace_file_content', fm, role)
             self.assertNotIn('argon', b.antigravity_agent(role).lower(), role)
         self.assertIn('read_file', b.STARTER_AGENTS_MD)
-        self.assertIn('Orchestrator (Neon)', b.ESCALATION_INTRO)
-        self.assertIn('Orchestrator (Carbon)', b.ESCALATION_INTRO)
-        self.assertNotIn('argon', b.ESCALATION_INTRO.lower())
-        self.assertIn('Swarm', b.ESCALATION_INTRO)
+        notes = b.escalation_doc_header('antigravity')
+        self.assertIn('Orchestrator (Neon)', notes)
+        self.assertIn('Orchestrator (Carbon)', notes)
+        self.assertNotIn('argon', notes.lower())
+        self.assertIn('Swarm', notes)
 
     def test_copilot_astra_roles_pin_gpt_6_2_astra(self):
         pinned = b.copilot_agent('security').split('---')[1].splitlines()
@@ -125,12 +126,13 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(any(line.startswith('models') for line in pinned))
         self.assertIn('model-policy: required', pinned)
         self.assertFalse(any(line.startswith('modelPolicy') for line in pinned))
-        inherited = b.copilot_agent('backend').split('---')[1].splitlines()
+        inherited = b.copilot_agent('database').split('---')[1].splitlines()
         self.assertFalse(any(line.startswith('model') for line in inherited))
 
     def test_copilot_mai_models_are_preferred_not_required(self):
-        expected = {'frontend': 'mai-code-2', 'frontend-tester': 'mai-code-2',
-                    'ux-designer': 'mai-code-2', 'documentation': 'mai-code-2-flash'}
+        expected = {'backend': 'mai-code-2', 'frontend': 'mai-code-2', 'frontend-tester': 'mai-code-2',
+                    'integration-tester': 'mai-code-2', 'ux-designer': 'mai-code-2',
+                    'documentation': 'mai-code-2-flash'}
         self.assertEqual({r: i['copilot_model'] for r, i in b.ROLES.items() if i['copilot_model'].startswith('mai-')},
                          expected)
         for role, model in expected.items():
@@ -140,9 +142,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertFalse(any(line.startswith('models:') for line in fm))
             self.assertFalse(b.copilot_required(role))
         # A preferred default still escalates to a stronger model on the task call.
-        self.assertTrue(b.escalation_section('software').count('| `frontend` |') == 1)
-        self.assertIn('`gpt-6.2-sol`, high |', next(line for line in b.escalation_section('software').splitlines()
-                                                    if line.startswith('| `frontend` |')))
+        self.assertEqual(b.escalation_doc_table('software', 'copilot').count('| `frontend` |'), 1)
+        self.assertIn('| `frontend` | `gpt-6.2-sol`, high |', b.escalation_doc_table('software', 'copilot'))
         saved = dict(b.ROLES['frontend'])
         try:
             b.ROLES['frontend']['copilot_model_policy'] = 'sometimes'
@@ -300,9 +301,11 @@ class BootstrapTests(unittest.TestCase):
                 target = (rank[model], b.EFFORTS.index(rule[f'{platform}_effort']))
                 self.assertGreater(target, default, f'{role} {platform}')
                 self.assertIn(f'| `{role}` | {rule["when"]} |', b.escalation_section(info['domain']))
-        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation | '
-                      '`gpt-6.2-sol`, medium | Default | `gpt-6.2-sol`, medium |',
+        self.assertIn('| `slicer-specialist` | Substantial scripting or export automation |',
                       b.escalation_section('freecad'))
+        for platform, cell in (('codex', '`gpt-6.2-sol`, medium'), ('claude', 'Default'),
+                               ('copilot', '`gpt-6.2-sol`, medium')):
+            self.assertIn(f'| `slicer-specialist` | {cell} |', b.escalation_doc_table('freecad', platform))
         broken = dict(b.ROLES['pcb-layout']['escalation'], claude_effort='extreme')
         saved = b.ROLES['pcb-layout']['escalation']
         try:
@@ -316,16 +319,18 @@ class BootstrapTests(unittest.TestCase):
         for role, info in b.ROLES.items():
             if rule := info.get('escalation'):
                 with self.subTest(role=role):
-                    table = b.escalation_section(info['domain'])
+                    table = b.escalation_doc_table(info['domain'], 'copilot')
                     row = next(line for line in table.splitlines() if line.startswith(f'| `{role}` |'))
                     model = rule.get('copilot_model')
                     effort = rule['copilot_effort']
+                    cell = row.split(' | ')[-1].removesuffix(' |')
                     if b.copilot_required(role):
                         self.assertFalse(model)
-                        self.assertTrue(row.endswith(f'| Agent model, {effort} |'))
+                        self.assertFalse((rule.get('mid') or {}).get('copilot_model'))
+                        self.assertEqual(cell, f'Agent model, {effort}')
                     else:
                         self.assertIn(model, ('gpt-6.2-sol', 'gpt-6.2-astra', 'claude-opus-5.5'))
-                        self.assertTrue(row.endswith(f'| `{model}`, {effort} |'))
+                        self.assertTrue(cell.endswith(f'`{model}`, {effort}'))
         saved = b.ROLES['security']['escalation']
         try:
             b.ROLES['security']['escalation'] = dict(saved, copilot_model='claude-opus-5.5')
@@ -336,6 +341,105 @@ class BootstrapTests(unittest.TestCase):
                 b.caps('security')
         finally:
             b.ROLES['security']['escalation'] = saved
+
+    def test_escalation_reaches_opus_only_through_a_mid_tier_step(self):
+        # Start cheap, then a mid-tier step, then the final setting: never a direct jump to Opus.
+        rank = {'sonnet': 0, 'opus': 1, 'fable': 2, 'claude-sonnet-5.5': 0, 'claude-opus-5.5': 1}
+        for role, info in b.ROLES.items():
+            rule = info.get('escalation') or {}
+            mid = rule.get('mid') or {}
+            with self.subTest(role=role):
+                if info['claude_model'] == 'sonnet' and rule.get('claude_model') == 'opus':
+                    self.assertEqual((mid.get('claude_model'), mid.get('claude_effort')), ('sonnet', 'high'))
+                if rule.get('copilot_model') == 'claude-opus-5.5':
+                    self.assertEqual((mid.get('copilot_model'), mid.get('copilot_effort')),
+                                     ('claude-sonnet-5.5', 'high'))
+                for platform in ('claude', 'copilot'):
+                    if step := mid.get(f'{platform}_model'):
+                        final = rule[f'{platform}_model']
+                        self.assertLess((rank[step], b.EFFORTS.index(mid[f'{platform}_effort'])),
+                                        (rank[final], b.EFFORTS.index(rule[f'{platform}_effort'])))
+                        row = next(line for line in b.escalation_doc_table(info['domain'], platform).splitlines()
+                                   if line.startswith(f'| `{role}` |'))
+                        self.assertIn(f'`{step}`, {mid[f"{platform}_effort"]} → `{final}`, '
+                                      f'{rule[f"{platform}_effort"]}', row)
+        expected = {'codex': ('Default', '`gpt-6.2-sol`, high'),
+                    'claude': ('`sonnet`, high → `opus`, high', '`sonnet`, high → `opus`, high'),
+                    'copilot': ('`claude-sonnet-5.5`, high → `claude-opus-5.5`, high', '`gpt-6.2-sol`, high')}
+        for platform, (tester, frontend) in expected.items():
+            table = b.escalation_doc_table('software', platform)
+            self.assertIn(f'| `integration-tester` | {tester} |', table)
+            self.assertIn(f'| `frontend` | {frontend} |', table)
+
+    def test_escalation_mid_step_is_validated(self):
+        saved = b.ROLES['integration-tester']['escalation']
+        try:
+            for mid, message in (({'claude_model': 'sonnet', 'claude_effort': 'extreme'}, 'claude_effort'),
+                                 ({'claude_effort': 'high'}, 'claude_model'),
+                                 ({'codex_model': 'gpt-6.1-terra', 'codex_effort': 'high'}, 'final codex_model'),
+                                 ({'gemini_model': 'x'}, 'unknown setting')):
+                with self.subTest(mid=mid):
+                    b.ROLES['integration-tester']['escalation'] = dict(saved, mid=mid)
+                    with self.assertRaisesRegex(ValueError, message):
+                        b.caps('integration-tester')
+        finally:
+            b.ROLES['integration-tester']['escalation'] = saved
+        saved = b.ROLES['security']['escalation']
+        try:
+            b.ROLES['security']['escalation'] = dict(saved, mid={'copilot_model': 'claude-sonnet-5.5',
+                                                                 'copilot_effort': 'high'})
+            with self.assertRaisesRegex(ValueError, 'required Copilot model'):
+                b.caps('security')
+        finally:
+            b.ROLES['security']['escalation'] = saved
+
+    def test_escalation_rules_start_cheap_and_step_up(self):
+        intro = b.ESCALATION_POLICY
+        self.assertIn('never escalate up front', intro)
+        self.assertIn('reports that the task needs escalation', intro)
+        self.assertIn('one step at a time', intro)
+        self.assertIn('is not by itself a reason to escalate', intro)
+        self.assertIn('re-delegate at the next step', intro)
+        self.assertNotIn('`claude-opus-5.5` at the listed effort', b.escalation_doc_header('copilot'))
+        self.assertIn('`claude-sonnet-5.5` at the listed effort', b.escalation_doc_header('copilot'))
+        self.assertIn('Delegate bounded code and test tasks to the matching specialist by default',
+                      b.STARTER_AGENTS_MD)
+
+    def test_agents_md_escalation_is_tool_neutral_and_tools_get_their_own_file(self):
+        section = b.escalation_section('software')
+        for detail in ('task` call', 'reasoning_effort', 'Orchestrator', 'Swarm', 'gpt-6.2', 'opus', 'sonnet',
+                       'Auto', 'model` and `effort`'):
+            self.assertNotIn(detail, section)
+        self.assertIn('| Role | Escalate when |', section)
+        self.assertIn('`docs/agent-team/escalation-<tool>.md`', section)
+        roles = b.PRESETS['web']
+        for platform in b.PLATFORMS:
+            doc = b.planned_files([platform], roles, True)[Path(b.ESCALATION_DOC.format(platform))]
+            self.assertTrue(doc.startswith(f'# Model escalation: {b.TOOL_TITLES[platform]}\n'))
+            self.assertIn(b.TOOL_NOTES[platform], doc)
+            for other in set(b.PLATFORMS) - {platform}:
+                self.assertNotIn(b.TOOL_NOTES[other], doc)
+                self.assertNotIn(Path(b.ESCALATION_DOC.format(other)), b.planned_files([platform], roles, True))
+        self.assertNotIn('## Software roles', b.planned_files(['antigravity'], roles, True)[
+            Path(b.ESCALATION_DOC.format('antigravity'))])
+        self.assertFalse(any('docs/agent-team' in str(p) for p in b.planned_files(['copilot'], roles, False)))
+
+    def test_escalation_files_gain_domain_tables_on_rerun(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = ['--project', td, '--platforms', 'claude', 'copilot', '--with-agents-md', '--apply']
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(base + ['--preset', 'web']), 0)
+            doc = Path(td) / b.ESCALATION_DOC.format('copilot')
+            first = doc.read_text()
+            self.assertIn('## Software roles', first)
+            self.assertNotIn('## KiCad roles', first)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.main(base + ['--preset', 'web', 'kicad-core']), 0)
+                self.assertEqual(b.main(base + ['--preset', 'web', 'kicad-core']), 0)
+            text = doc.read_text()
+            self.assertTrue(text.startswith(first))
+            self.assertEqual(text.count('## KiCad roles'), 1)
+            self.assertEqual(text.count('# Model escalation: Copilot CLI'), 1)
 
     def test_pcb_layout_priorities_come_from_the_requirements_template(self):
         self.assertIn('Layout priorities section of docs/electronics/design-requirements.md', b.body('pcb-layout'))
