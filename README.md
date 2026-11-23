@@ -47,7 +47,7 @@ python3 bootstrap.py --project ~/Projects/parts --platforms codex \
   --preset core --roles database devops --apply
 ```
 
-To generate initial project instructions, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. If `AGENTS.md` already exists (for example from another guidance package), only the domain sections it lacks are appended, matched by their heading; nothing else in it is changed, and reruns add nothing. It also gets a model escalation section for each domain selected (see [Model escalation](#model-escalation)). With `--platforms claude`, a `CLAUDE.md` containing `@AGENTS.md` is created, or that line appended to an existing one, because Claude Code reads `CLAUDE.md` rather than `AGENTS.md`.
+To generate initial project instructions, use `--with-agents-md` and edit the resulting `AGENTS.md`. When KiCad or FreeCAD roles are selected it includes an Electronics or Mechanical section with project facts to fill in. If `AGENTS.md` already exists (for example from another guidance package), only the domain sections it lacks are appended, matched by their heading; nothing else in it is changed, and reruns add nothing. It also gets a tool-neutral model escalation section for each domain selected, and each selected platform gets its escalation settings in `docs/agent-team/escalation-<tool>.md` (see [Model escalation](#model-escalation)). With `--platforms claude`, a `CLAUDE.md` containing `@AGENTS.md` is created, or that line appended to an existing one, because Claude Code reads `CLAUDE.md` rather than `AGENTS.md`.
 
 ## KiCad and FreeCAD kits
 
@@ -101,7 +101,7 @@ Codex has no per-agent tool list, and `sandbox_mode` in an agent file does not o
 
 - Codex defaults use GPT-6.2 Sol for most engineering (including component engineering, where footprint and pin errors force a board respin), GPT-6.1 Terra for UI, documentation and slicer work, and GPT-6.2 Astra for security, auditors, power electronics and signal integrity. Reasoning effort ranges from Medium to Extra High.
 - Claude defaults: Sonnet for implementation, Opus for the circuit designer (native schematic edits and design calculations), component engineering and electrical verification (where a pin, footprint or rating error forces a board respin), security, auditors, power electronics and signal integrity. These use documented family aliases, **not** pinned versions; modify per project if desired.
-- Most Copilot roles inherit the CLI-selected model. Frontend, frontend testing and UX review prefer `mai-code-2`, and documentation prefers `mai-code-2-flash`, the same light tier that runs on GPT-6.1 Terra in Codex. These roles set `model-policy: preferred`, so an escalation can override the model. Security, auditors, power electronics and signal integrity pin `gpt-6.2-astra` with `model-policy: required`, so Copilot ignores a model override for them. Under either policy, if the account lacks the model, Copilot warns and runs the agent on the session model. Tools use the documented aliases `read`, `search`, `edit` and `execute`. Copilot silently ignores names it does not recognize. [Copilot CLI agent settings](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
+- Most Copilot roles inherit the CLI-selected model. Backend, frontend, integration testing, frontend testing and UX review prefer `mai-code-2`, and documentation prefers `mai-code-2-flash`, the same light tier that runs on GPT-6.1 Terra in Codex. These roles set `model-policy: preferred`, so an escalation can override the model. Security, auditors, power electronics and signal integrity pin `gpt-6.2-astra` with `model-policy: required`, so Copilot ignores a model override for them. Under either policy, if the account lacks the model, Copilot warns and runs the agent on the session model. Tools use the documented aliases `read`, `search`, `edit` and `execute`. Copilot silently ignores names it does not recognize. [Copilot CLI agent settings](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields)
 - Antigravity defaults: `model: inherit` for every role. Subagent files accept only the tiers `inherit`, `flash_lite`, `flash` and `pro`, not model IDs, and in agy 1.5.8 both `pro` and `flash` ran on `gemini-3.8-flash-tiered` while `inherit` ran on the parent's model (tested 2026-11-13 against a `gemini-4-carbon-high` parent). Every role therefore runs on the session's model. Edit roles receive `write_to_file` and `replace_file_content` (mapped to `write_file` and `edit_file` in Antigravity CLI, verified live 2026-11-19), inspectors receive `run_command` with `commandExecutionPolicy: sandbox`, and read-only reviewers set `commandExecutionPolicy: off` without `run_command`. `find_by_name` is excluded because unknown tool names can hang older Antigravity builds and Antigravity CLI does not expose separate search tools (`grep_search` / `find_by_name`) to subagents—pass explicit file paths or diffs when delegating to a CLI reviewer so it can inspect them with `read_file`. See [Antigravity primary agent and Swarm escalation](#antigravity-primary-agent-and-swarm-escalation) below.
 - For every platform, real tool permissions and model availability can vary by version, plan, or environment.
 
@@ -134,7 +134,7 @@ Installing a `full` preset alone does not require Astra: choose based on the act
 
 The catalog sets integration testing and PCB manufacturing to High because their full responsibilities include failure-mode design and fabrication readiness. CAD verification defaults to Medium for its established inspection scripts. Other defaults retain the existing model split. The three auditors retain Astra Extra High for deep, comprehensive audits; use High for routine reviews or consultations.
 
-Generated agent files have one fixed model and effort. The upward overrides below are also written to `AGENTS.md` as [escalation rules](#model-escalation) for the primary to apply when delegating; the downward ones (cheaper settings for routine work) stay manual, by editing the agent file or overriding the model when delegating.
+Generated agent files have one fixed model and effort. The upward overrides below are also written to `docs/agent-team/escalation-codex.md` as [escalation settings](#model-escalation) for the primary to apply when delegating; the downward ones (cheaper settings for routine work) stay manual, by editing the agent file or overriding the model when delegating.
 
 | Specialist | Task-specific override |
 |---|---|
@@ -181,35 +181,35 @@ Installing a `full` preset alone does not require Fable: choose based on the act
 
 ### Claude Code specialist overrides
 
-Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in `catalog/roles.json`) but no `effort`. To fix a specialist's effort permanently, add an `effort:` line (`low` to `max`) to the frontmatter of its `.claude/agents/<role>.md` file. Every override below is an escalation, written to `AGENTS.md` as an [escalation rule](#model-escalation).
+Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in `catalog/roles.json`) but no `effort`. To fix a specialist's effort permanently, add an `effort:` line (`low` to `max`) to the frontmatter of its `.claude/agents/<role>.md` file. Every override below is an escalation, written to `docs/agent-team/escalation-claude.md` as an [escalation setting](#model-escalation). "Sonnet High, then Opus High" is a two-step escalation: Opus only if Sonnet High also falls short.
 
 | Specialist | Default | Task-specific override |
 |---|---|---|
-| `frontend` | Sonnet | Opus High for complex state management, asynchronous behavior and application logic; retain Sonnet for visual/component work. |
+| `frontend` | Sonnet | Sonnet High, then Opus High for complex state management, asynchronous behavior and application logic; retain Sonnet for visual/component work. |
 | `devops` | Sonnet | Medium effort for small, familiar CI edits. |
-| `integration-tester` | Sonnet | Opus High for test design involving concurrency, recovery, authorization or migrations; retain Sonnet for running established suites. |
+| `integration-tester` | Sonnet | Sonnet High, then Opus High for test design involving concurrency, recovery, authorization or migrations; retain Sonnet for running established suites. |
 | `security` | Opus | Fable High for complex security architecture or threat models spanning several services. |
 | `auditor-advisor`, `hardware-auditor`, `mechanical-auditor` | Opus | Opus Extra High for comprehensive audits; the default for incremental reviews and routine consultations. |
 | `circuit-designer` | Opus | Fable High for novel analog, mixed-signal or protection design. |
-| `pcb-layout` | Sonnet | Opus High for difficult electrical/layout tradeoffs. |
-| `pcb-manufacturing` | Sonnet | Opus High for final fabrication/assembly readiness; retain Sonnet for export staging and established checklists. |
-| `hardware-bringup` | Sonnet | Opus High for ambiguous fault diagnosis spanning several subsystems. |
+| `pcb-layout` | Sonnet | Sonnet High, then Opus High for difficult electrical/layout tradeoffs. |
+| `pcb-manufacturing` | Sonnet | Sonnet High, then Opus High for final fabrication/assembly readiness; retain Sonnet for export staging and established checklists. |
+| `hardware-bringup` | Sonnet | Sonnet High, then Opus High for ambiguous fault diagnosis spanning several subsystems. |
 | `power-electronics` | Opus | Opus Extra High for difficult stability, transient and interacting protection problems. |
 | `signal-integrity` | Opus | Opus Extra High for difficult return-path, stackup and coupling tradeoffs. |
-| `mechanical-engineer` | Sonnet | Opus High for coupled load, material, thermal and tolerance analysis. |
-| `electronics-enclosure` | Sonnet | Opus High when thermal, electrical and mechanical requirements conflict. |
-| `printability-engineer` | Sonnet | Opus High for load-bearing parts, anisotropy and tight fits. |
-| `cad-verifier` | Sonnet | Opus High for unexplained geometry or export failures. |
+| `mechanical-engineer` | Sonnet | Sonnet High, then Opus High for coupled load, material, thermal and tolerance analysis. |
+| `electronics-enclosure` | Sonnet | Sonnet High, then Opus High when thermal, electrical and mechanical requirements conflict. |
+| `printability-engineer` | Sonnet | Sonnet High, then Opus High for load-bearing parts, anisotropy and tight fits. |
+| `cad-verifier` | Sonnet | Sonnet High, then Opus High for unexplained geometry or export failures. |
 
 Component engineering and electrical verification run on Opus by default, like their Codex counterparts on Sol High. Backend, database, performance, firmware, CAD, assembly and slicer work, frontend testing, UX review and documentation retain Sonnet. Validate these choices on representative tasks and adjust based on observed results. See the [Claude Code subagent documentation](https://code.claude.com/docs/en/sub-agents) for supported frontmatter fields.
 
 ### Copilot CLI specialist overrides
 
-The Copilot column in the generated escalation tables gives the model and reasoning effort for each task. These recommendations are based on the roles' responsibilities and the models' published strengths. [GitHub Copilot model comparison](https://docs.github.com/en/copilot/reference/ai-models/model-comparison) · [OpenAI model guide](https://learn.chatgpt.com/docs/models)
+The generated `docs/agent-team/escalation-copilot.md` gives the model and reasoning effort for each task. These recommendations are based on the roles' responsibilities and the models' published strengths. [GitHub Copilot model comparison](https://docs.github.com/en/copilot/reference/ai-models/model-comparison) · [OpenAI model guide](https://learn.chatgpt.com/docs/models)
 
 - **GPT-6.2 Sol** at High for complex frontend logic and unexplained CAD failures, and Medium for slicer scripting and export automation.
 - **GPT-6.2 Astra** at High for PCB layout tradeoffs, board bring-up and conflicting enclosure requirements. These tasks can require several rounds of diagnosis and verification.
-- **Claude Opus 5.5** at High for failure-mode test design, novel circuit design, final fabrication review, coupled mechanical analysis and difficult printability decisions.
+- **Claude Sonnet 5.5, then Claude Opus 5.5**, both at High, for failure-mode test design, novel circuit design, final fabrication review, coupled mechanical analysis and difficult printability decisions. Sonnet is the mid-tier first step; Opus runs only if Sonnet also falls short.
 - **Agent model** at Extra High (`xhigh`) for complex security reviews, comprehensive audits and difficult power or signal-integrity work. The profile selects its required Astra model, and the dispatch sets the effort.
 
 MAI Code 2 and MAI Code 2 Flash are defaults only, never escalation targets. Microsoft positions MAI Code 2 for everyday coding at near-GPT-6.1 Sol quality and much lower cost, with strong UI results, but not for very long-horizon work. Flash is aimed at high-volume work: explanations, targeted edits and routine fixes. On SWE Atlas codebase Q&A, which documentation depends on, Flash scores about the same as MAI Code 2. Security and auditor roles keep Astra: the model card rates MAI alignment below GPT-6, and it is served behind cybersecurity classifiers that may refuse exploit-related review. Hardware roles keep the session model because the card says less common languages and frameworks have not been extensively evaluated. [MAI Code 2 model card](https://microsoft.ai/pdf/MAI-Code-2-And-MAI-Code-2-Flash-Model-Card.pdf)
@@ -232,11 +232,11 @@ Because `.agents/agents/*.md` subagents use `model: inherit` and cannot pin exac
 
 The specialist tables above only help if the primary agent knows them, so escalation is installed in three layers:
 
-1. **Defaults.** Each specialist starts with its configured or inherited model and reasoning effort.
-2. **Rules for the primary.** `--with-agents-md` writes a `## Model escalation: <domain> roles` section to `AGENTS.md` for each selected domain. Each row gives a task trigger and the settings to use in Codex, Claude Code and Copilot CLI. The primary applies the settings on the delegation call. On Antigravity, run an Orchestrator primary for everyday work and either switch to a stronger frontier session model or pin exact models per role in Swarm (`/teamwork`) for escalated tasks. Each section covers the whole domain so it also applies when you install more roles later.
-3. **Specialists ask.** Every role's shared practices tell it to stop and report that a task needs escalation, and why, rather than finish at reduced confidence. The escalation section tells the primary to delegate such a task again at the listed setting.
+1. **Defaults.** Each specialist starts with its configured or inherited model and reasoning effort, and the primary never escalates up front.
+2. **Rules for the primary.** `--with-agents-md` writes a tool-neutral `## Model escalation: <domain> roles` section to `AGENTS.md` for each selected domain: when to escalate (start at the configured model, escalate only after a specialist asks or its result still fails review after one round of feedback, one step at a time) and, per role, the work that usually needs it. Each selected platform also gets `docs/agent-team/escalation-<tool>.md` with that tool's settings per role (`A → B` means a mid-tier step `A` first, then `B`) and how to apply them on the delegation call. An agent reads only its own tool's file, and only when escalating, so tool details stay out of `AGENTS.md` (agent-guidance keeps tool adapters such as `CLAUDE.md` and `.github/copilot-instructions.md` as pointers only). Antigravity's file explains running an Orchestrator primary for everyday work and switching to a stronger frontier session model or pinning exact models per role in Swarm (`/teamwork`) for escalated tasks. Each section covers the whole domain so it also applies when you install more roles later.
+3. **Specialists ask.** Every role's shared practices tell it to stop and report that a task needs escalation, and why, rather than finish at reduced confidence. The escalation section tells the primary to delegate such a task again at the next step.
 
-The primary still decides whether a task matches a rule, so review delegations on important work.
+Starting cheap keeps routine work on the specialists' default models; in one Copilot CLI trial, an up-front escalation to Opus made a delegated test task cost more than doing it directly. Review delegations on important work.
 
 ## Verification
 
@@ -254,11 +254,11 @@ Check the models available to your Codex client with `codex debug models`. To us
 
 ## Customization
 
-Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules, and `catalog/role_details.json` to change responsibilities. Each escalation rule defines `when` and can set `codex_model`/`codex_effort`, `claude_model`/`claude_effort` or `copilot_model`/`copilot_effort`. `copilot_model` is required by default; add `"copilot_model_policy": "preferred"` so the role falls back to the session model and its escalation rule can set `copilot_model`. For a required Copilot model, set only `copilot_effort` in the escalation rule. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer, OS, sourcing, and tool facts live in the kit's `AGENTS.md` section and `docs/` templates, not in the agents, so fill those in for your environment. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
+Edit `catalog/roles.json` to change descriptions, `domain` (`software`, `kicad` or `freecad`), recommended model defaults or `escalation` rules, and `catalog/role_details.json` to change responsibilities. Each escalation rule defines `when` and can set `codex_model`/`codex_effort`, `claude_model`/`claude_effort` or `copilot_model`/`copilot_effort`. `copilot_model` is required by default; add `"copilot_model_policy": "preferred"` so the role falls back to the session model and its escalation rule can set `copilot_model`. For a required Copilot model, set only `copilot_effort` in the escalation rule. An optional `mid` object in a rule (for example `{"claude_model":"sonnet","claude_effort":"high"}`) adds a mid-tier first step for platforms whose rule also sets a final model; it is shown as `A → B` and cannot set a model for a required Copilot model. These are the canonical definitions used to generate all platforms. Shared principles come from `catalog/practices.md` for software roles and `domains/<domain>/practices.md` for the hardware domains. Each domain's `AGENTS.md` section and its `files/` tree (laid out at install paths) make up its kit. Printer, OS, sourcing, and tool facts live in the kit's `AGENTS.md` section and `docs/` templates, not in the agents, so fill those in for your environment. Rerunning won't overwrite previously installed agents: remove or manually update individual files intentionally.
 
 ### Updating existing installations
 
-To refresh `AGENTS.md` escalation sections in an existing project after updating this repository, run the same presets with `--with-agents-md --apply` in a temporary directory, then merge the updated escalation sections from its `AGENTS.md` into your project's copy.
+To refresh escalation rules in an existing project after updating this repository, run the same presets and platforms with `--with-agents-md --apply` in a temporary directory, then copy its `docs/agent-team/` files into the project and replace the project's `## Model escalation` sections with the new ones from its `AGENTS.md`. Older installs carry tool settings inside `AGENTS.md`; the new sections replace them.
 
 Documentation references (agent file fields and tool names for Codex, Copilot CLI and Antigravity checked 2026-11-13):
 - https://learn.chatgpt.com/docs/agent-configuration/subagents

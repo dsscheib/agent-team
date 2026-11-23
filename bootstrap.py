@@ -77,7 +77,7 @@ Describe the purpose, audience, and key workflows of this repository.
 - TODO: Add build, lint, unit and integration commands.
 
 ## Agent delegation
-- Delegate bounded tasks to relevant specialists; the parent retains integration responsibility.
+- Delegate bounded code and test tasks to the matching specialist by default (specialists run cheaper models); work directly only on docs, trivial edits, or when none fits. The parent retains integration responsibility.
 - Avoid concurrent changes to overlapping files.
 - Pass explicit file paths or diffs when delegating to read-only reviewers (Antigravity CLI reviewers have `read_file` only, without search or shell tools).
 - Review the result of each delegated task before accepting it.
@@ -103,6 +103,23 @@ def caps(role):
                 raise ValueError(f'Role {role!r} escalation {platform}_effort must be one of {", ".join(EFFORTS)}')
         if copilot_required(role) and rule.get('copilot_model'):
             raise ValueError(f'Role {role!r} has a required Copilot model and can escalate only its effort')
+        # Optional mid-tier first step, tried before the final setting on the same platform.
+        for platform, setting in (rule.get('mid') or {}).items():
+            name, _, field = platform.partition('_')
+            if name not in ESCALATION_PLATFORMS or field not in ('model', 'effort'):
+                raise ValueError(f'Role {role!r} escalation mid has unknown setting {platform!r}')
+        for platform in ESCALATION_PLATFORMS:
+            model = (rule.get('mid') or {}).get(f'{platform}_model')
+            effort = (rule.get('mid') or {}).get(f'{platform}_effort')
+            if not (model or effort):
+                continue
+            if not model or effort not in EFFORTS:
+                raise ValueError(f'Role {role!r} escalation mid needs {platform}_model and a {platform}_effort '
+                                 f'from {", ".join(EFFORTS)}')
+            if platform == 'copilot' and copilot_required(role):
+                raise ValueError(f'Role {role!r} has a required Copilot model and can escalate only its effort')
+            if not rule.get(f'{platform}_model'):
+                raise ValueError(f'Role {role!r} escalation mid {platform}_model needs a final {platform}_model')
     return KINDS[kind]
 
 
@@ -218,14 +235,20 @@ def kits(roles):
 DOMAIN_NAMES = {'software': 'Software', 'kicad': 'KiCad', 'freecad': 'FreeCAD'}
 EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 
-ESCALATION_INTRO = '''Specialists use their configured or inherited model and effort. When a task matches a row below, delegate it at the listed setting.
-- Claude Code: set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.
-- Codex: pass the listed values as the model and reasoning effort overrides when spawning the agent.
-- Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Select an explicit session model first: under Auto, every subagent runs on the session model, ignoring both overrides and the agent's own model, including a required one. Copilot does not report an unavailable override; the task silently runs on the session model. The same applies to an agent's preferred model such as `mai-code-2`, and a model override on the call replaces it. Before relying on a GPT-6.2 row, confirm the account offers that model; if it does not, use `claude-opus-5.5` at the listed effort for roles without a required model.
-- Antigravity subagents inherit the session model (`model: inherit`). For everyday work, run `Orchestrator (Neon)` as the primary (or `Orchestrator (Carbon)` for complex long-horizon architecture). For escalated tasks, switch to a frontier session model directly (`Gemini 4 Neon` High/XHigh or `Gemini 4 Carbon` High), or use Swarm (`/teamwork`) when you need to pin individual roles to exact model IDs (e.g., `gemini-4-neon-high`, `gemini-4-neon-xhigh`, `gemini-4-carbon-high`, or `claude-opus-5-5-high` for auditors alongside `gemini-4-hydrogen-high` or `gemini-pro-orchestrator-neon` for implementers). When delegating to a read-only reviewer on Antigravity CLI, pass explicit file paths or diffs because reviewers only receive `read_file`.
-- "Default" means the role's default is already suited; a role not installed in this project does not apply.
+# Tool-neutral escalation policy for AGENTS.md. Each tool's settings and mechanics live in its own
+# routed file (ESCALATION_DOC), so an agent reads only its own tool's details, and only when escalating.
+ESCALATION_DOC = 'docs/agent-team/escalation-{}.md'
+ESCALATION_POLICY = '''Specialists start at their configured or inherited model and effort; never escalate up front. Escalate a role listed below only when its specialist reports that the task needs escalation, or its result still fails review after one round of specific feedback. Escalate one step at a time: re-delegate at step 1 (mid-tier where the tool has one), and use step 2 only if step 1 also reports that it needs escalation or fails review. If the last step still falls short, or the role has no row, report it to the user. The "Escalate when" column describes the work that usually justifies escalation; it is not by itself a reason to escalate.
 
-If a specialist reports that its task needs escalation, delegate it again at the listed setting rather than accepting a reduced-confidence result.'''
+Before escalating, read the settings and mechanics for the tool you are running in: `docs/agent-team/escalation-<tool>.md`, where `<tool>` is `claude`, `codex`, `copilot` or `antigravity`. If your tool has no such file, report the need to the user instead. When escalation is warranted, re-delegate at the next step rather than accepting a reduced-confidence result.'''
+
+TOOL_TITLES = {'codex': 'Codex', 'claude': 'Claude Code', 'copilot': 'Copilot CLI', 'antigravity': 'Antigravity'}
+TOOL_NOTES = {
+    'claude': "Set the subagent's `model` and `effort` to the listed values; they override the agent file. This is an explicit instruction to run that subagent at the listed effort.",
+    'codex': 'Pass the listed values as the model and reasoning effort overrides when spawning the agent.',
+    'copilot': 'Copilot CLI uses `model` and `reasoning_effort` on the `task` call. For "Agent model," pass only `reasoning_effort` and let the profile resolve the model. Select an explicit session model first: under Auto, every subagent runs on the session model, ignoring both overrides and the agent\'s own model, including a required one. Copilot does not report an unavailable override; the task silently runs on the session model. The same applies to an agent\'s preferred model such as `mai-code-2`, and a model override on the call replaces it. Before relying on a GPT-6.2 row, confirm the account offers that model; if it does not, use `claude-sonnet-5.5` at the listed effort for roles without a required model.',
+    'antigravity': 'Antigravity subagents inherit the session model (`model: inherit`). For everyday work, run `Orchestrator (Neon)` as the primary (or `Orchestrator (Carbon)` for complex long-horizon architecture). For escalated tasks, switch to a frontier session model directly (`Gemini 4 Neon` High/XHigh or `Gemini 4 Carbon` High), or use Swarm (`/teamwork`) when you need to pin individual roles to exact model IDs (e.g., `gemini-4-neon-high`, `gemini-4-neon-xhigh`, `gemini-4-carbon-high`, or `claude-opus-5-5-high` for auditors alongside `gemini-4-hydrogen-high` or `gemini-pro-orchestrator-neon` for implementers). When delegating to a read-only reviewer on Antigravity CLI, pass explicit file paths or diffs because reviewers only receive `read_file`.',
+}
 
 
 def used_domains(roles):
@@ -233,23 +256,61 @@ def used_domains(roles):
     return [d for d in DOMAIN_DIRS if d in used]
 
 
+def escalation_rules(domain):
+    return [(role, rule) for role in domain_roles(domain) if (rule := ROLES[role].get('escalation'))]
+
+
+def escalation_setting(rule, platform):
+    """One tool's escalation cell: `step 1` → `step 2`, a single step, or Default."""
+    model = rule.get(f'{platform}_model')
+    effort = rule.get(f'{platform}_effort')
+    mid = rule.get('mid') or {}
+    if model and mid.get(f'{platform}_model'):
+        return f'`{mid[f"{platform}_model"]}`, {mid[f"{platform}_effort"]} → `{model}`, {effort}'
+    if model:
+        return f'`{model}`, {effort}'
+    if platform == 'copilot' and effort:
+        return f'Agent model, {effort}'
+    return 'Default'
+
+
 def escalation_section(domain):
-    """Model escalation rules for every role of a domain, so the section is the same whichever roles are installed."""
-    def setting(rule, platform):
-        model = rule.get(f'{platform}_model')
-        effort = rule.get(f'{platform}_effort')
-        if model:
-            return f'`{model}`, {effort}'
-        if platform == 'copilot' and effort:
-            return f'Agent model, {effort}'
-        return 'Default'
-    rows = [f'| `{role}` | {rule["when"]} | '
-            + ' | '.join(setting(rule, platform) for platform in ESCALATION_PLATFORMS) + ' |'
-            for role in domain_roles(domain) if (rule := ROLES[role].get('escalation'))]
+    """Tool-neutral escalation rules for every role of a domain, the same whichever roles are installed."""
+    rows = [f'| `{role}` | {rule["when"]} |' for role, rule in escalation_rules(domain)]
     if not rows:
         return ''
-    return '\n'.join([f'## Model escalation: {DOMAIN_NAMES[domain]} roles', '', ESCALATION_INTRO, '',
-                      '| Role | Escalate when | Codex | Claude Code | Copilot CLI |', '|---|---|---|---|---|'] + rows)
+    return '\n'.join([f'## Model escalation: {DOMAIN_NAMES[domain]} roles', '', ESCALATION_POLICY, '',
+                      '| Role | Escalate when |', '|---|---|'] + rows)
+
+
+def escalation_doc_header(platform):
+    title = TOOL_TITLES[platform]
+    steps = ('' if platform == 'antigravity' else
+             ' In the tables below, `A → B` means step 1 `A`, then step 2 `B`; one setting means one step. '
+             '"Default" means the role\'s default is already suited, so it does not escalate in this tool; '
+             'a role not installed in this project does not apply.')
+    return (f'# Model escalation: {title}\n\n'
+            f'How to apply the "Model escalation" rules in `AGENTS.md` when you run in {title}. Those rules decide '
+            f'when to escalate; this file gives the settings.{steps}\n\n{TOOL_NOTES[platform]}\n')
+
+
+def escalation_doc_table(domain, platform):
+    rows = [f'| `{role}` | {escalation_setting(rule, platform)} |' for role, rule in escalation_rules(domain)]
+    if platform == 'antigravity' or not rows:
+        return ''
+    title = TOOL_TITLES[platform]
+    return '\n'.join([f'## {DOMAIN_NAMES[domain]} roles', '', f'| Role | {title} |', '|---|---|'] + rows) + '\n'
+
+
+def escalation_doc_blocks(roles, platform):
+    """[(marker line, block)] for one tool's escalation file: its header, then a table per used domain."""
+    if not any(escalation_rules(d) for d in used_domains(roles)):
+        return []
+    blocks = [(f'# Model escalation: {TOOL_TITLES[platform]}', escalation_doc_header(platform))]
+    for domain in used_domains(roles):
+        if table := escalation_doc_table(domain, platform):
+            blocks.append((f'## {DOMAIN_NAMES[domain]} roles', table))
+    return blocks
 
 
 def context_sections(roles):
@@ -283,6 +344,9 @@ def appendable_blocks(roles, context, tools=False, platforms=()):
         blocks[Path('AGENTS.md')] = [(s.splitlines()[0].strip(), s + '\n') for s in context_sections(roles)]
         if 'claude' in platforms:
             blocks[Path('CLAUDE.md')] = [('@AGENTS.md', CLAUDE_MD)]
+        for platform in platforms:
+            if doc := escalation_doc_blocks(roles, platform):
+                blocks[Path(ESCALATION_DOC.format(platform))] = doc
     if tools and kits(roles):
         blocks[Path('.gitignore')] = [('reports/', GITIGNORE_BLOCK)]
     return blocks
@@ -310,6 +374,9 @@ def planned_files(platforms, roles, context, tools=False):
         files[Path('AGENTS.md')] = agents_md(roles)
         if 'claude' in platforms:
             files[Path('CLAUDE.md')] = CLAUDE_MD
+        for platform in platforms:
+            if doc := escalation_doc_blocks(roles, platform):
+                files[Path(ESCALATION_DOC.format(platform))] = '\n'.join(block for _, block in doc)
     if tools:
         for domain in kits(roles):
             base = DOMAIN_DIRS[domain] / 'files'
