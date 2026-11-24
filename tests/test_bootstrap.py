@@ -370,6 +370,11 @@ class BootstrapTests(unittest.TestCase):
             table = b.escalation_doc_table('software', platform)
             self.assertIn(f'| `integration-tester` | {tester} |', table)
             self.assertIn(f'| `frontend` | {frontend} |', table)
+        # The software auditor reaches Fable only after Opus Extra High; the hardware auditors stop there.
+        claude = b.escalation_doc_table('software', 'claude')
+        self.assertIn('| `auditor-advisor` | `opus`, xhigh → `fable`, high |', claude)
+        for domain, role in (('kicad', 'hardware-auditor'), ('freecad', 'mechanical-auditor')):
+            self.assertIn(f'| `{role}` | `opus`, xhigh |', b.escalation_doc_table(domain, 'claude'))
 
     def test_escalation_mid_step_is_validated(self):
         saved = b.ROLES['integration-tester']['escalation']

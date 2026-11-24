@@ -181,7 +181,7 @@ Installing a `full` preset alone does not require Fable: choose based on the act
 
 ### Claude Code specialist overrides
 
-Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in `catalog/roles.json`) but no `effort`. To fix a specialist's effort permanently, add an `effort:` line (`low` to `max`) to the frontmatter of its `.claude/agents/<role>.md` file. Every override below is an escalation, written to `docs/agent-team/escalation-claude.md` as an [escalation setting](#model-escalation). "Sonnet High, then Opus High" is a two-step escalation: Opus only if Sonnet High also falls short.
+Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in `catalog/roles.json`) but no `effort`. To fix a specialist's effort permanently, add an `effort:` line (`low` to `max`) to the frontmatter of its `.claude/agents/<role>.md` file. Every override below is an escalation, written to `docs/agent-team/escalation-claude.md` as an [escalation setting](#model-escalation). "Sonnet High, then Opus High" is a two-step escalation: Opus only if Sonnet High also falls short. Likewise "Opus Extra High, then Fable High": Fable, which costs more, only if Opus Extra High also falls short.
 
 | Specialist | Default | Task-specific override |
 |---|---|---|
@@ -189,7 +189,8 @@ Generated Claude agent files set `model` (Sonnet or Opus, from `claude_model` in
 | `devops` | Sonnet | Medium effort for small, familiar CI edits. |
 | `integration-tester` | Sonnet | Sonnet High, then Opus High for test design involving concurrency, recovery, authorization or migrations; retain Sonnet for running established suites. |
 | `security` | Opus | Fable High for complex security architecture or threat models spanning several services. |
-| `auditor-advisor`, `hardware-auditor`, `mechanical-auditor` | Opus | Opus Extra High for comprehensive audits; the default for incremental reviews and routine consultations. |
+| `auditor-advisor` | Opus | Opus Extra High, then Fable High for comprehensive audits; the default for incremental reviews and routine consultations. |
+| `hardware-auditor`, `mechanical-auditor` | Opus | Opus Extra High for comprehensive audits; the default for incremental reviews and routine consultations. |
 | `circuit-designer` | Opus | Fable High for novel analog, mixed-signal or protection design. |
 | `pcb-layout` | Sonnet | Sonnet High, then Opus High for difficult electrical/layout tradeoffs. |
 | `pcb-manufacturing` | Sonnet | Sonnet High, then Opus High for final fabrication/assembly readiness; retain Sonnet for export staging and established checklists. |
